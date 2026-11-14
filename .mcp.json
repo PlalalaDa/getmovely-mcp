@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "getmovely": {
+      "type": "http",
+      "url": "https://getmovely.co.uk/mcp"
+    }
+  }
+}
