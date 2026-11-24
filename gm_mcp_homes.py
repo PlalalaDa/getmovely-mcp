@@ -91,7 +91,15 @@ def register(core):
         the rating it could reach, modelled running costs a year for heating, hot water and
         lighting, carbon dioxide, which parts of the building are weak (walls, roof,
         windows), and the assessor's own list of improvements with their indicative costs.
-        Costs are the assessor's model at the prices of the certificate's date, not bills."""
+        Costs are the assessor's model at the prices of the certificate's date, not bills.
+
+        Use it for "how efficient is this home", "what would it cost to heat" and "what
+        should I upgrade", when an `akey` is known (from search_addresses or any row another
+        tool returned). address_report carries the same certificate among its nine parts;
+        house_age gives only the build era. A home with no certificate returns
+        `certificate: false` and a `reason` (one not sold or let since 2008 may never have
+        had one); that is missing evidence, not a bad rating. Check `certificate_year`:
+        an old certificate may predate later work on the home."""
         rep = await _get("/api/address-report", {"akey": akey}, ctx)
         t = _tiles(rep)
         en, bld = detail(t, "energy"), detail(t, "building")
@@ -123,26 +131,10 @@ def register(core):
             method=en.get("note"))
 
     # ------------------------------------------------------------ price check
-    @mcp.tool(title="Check a price against the district and the street", annotations=READ)
-    @logged("price_check")
-    async def price_check(
-        akey: AKey,
-        price_gbp: Annotated[int | None, Field(
-            ge=10_000, le=100_000_000,
-            description="The price to check, in pounds: an asking price, an offer, a valuation. "
-                        "Leave out to get what the district's prices imply for a home this size "
-                        "(and, when the home is advertised for sale, to check its asking price).")] = None,
-        ctx: Context = None,
-    ) -> dict:
-        """Is a price in line? Works out the price per square metre from the home's EPC
-        floor area and sets it against three things: what homes of the same type sold for
-        per square metre in the same postcode district in the latest whole year, with the
-        quartiles; recent sales on the home's own street or postcode; and the home's own
-        last sale moved by the district's change since. Also gives the price range the
-        district's quartiles imply for this floor area. Arithmetic on public medians, not a
-        valuation, and the answer carries the caveats to pass on. Shares the address
-        report's limit of 60 an hour per caller."""
-        rep = await _get("/api/address-report", {"akey": akey}, ctx)
+    async def _price_check_core(akey: str, price_gbp, ctx, rep: dict | None = None) -> dict:
+        """price_check's answer, shared with negotiation_brief, which already holds the report."""
+        if rep is None:
+            rep = await _get("/api/address-report", {"akey": akey}, ctx)
         t = _tiles(rep)
         bld, trend, local, market = (detail(t, "building"), detail(t, "price_trend"),
                                      detail(t, "local_market"), detail(t, "market_history"))
@@ -229,6 +221,217 @@ def register(core):
                               f"£{implied['mid_gbp']:,}, within £{implied['low_gbp']:,} to "
                               f"£{implied['high_gbp']:,}.")
         out["caveats"] = caveats
+        return _ok(**out)
+
+    @mcp.tool(title="Check a price against the district and the street", annotations=READ)
+    @logged("price_check")
+    async def price_check(
+        akey: AKey,
+        price_gbp: Annotated[int | None, Field(
+            ge=10_000, le=100_000_000,
+            description="The price to check, in pounds: an asking price, an offer, a valuation. "
+                        "Leave out to get what the district's prices imply for a home this size "
+                        "(and, when the home is advertised for sale, to check its asking price).")] = None,
+        ctx: Context = None,
+    ) -> dict:
+        """Is a price in line? Works out the price per square metre from the home's EPC
+        floor area and sets it against three things: what homes of the same type sold for
+        per square metre in the same postcode district in the latest whole year, with the
+        quartiles; recent sales on the home's own street or postcode; and the home's own
+        last sale moved by the district's change since. Also gives the price range the
+        district's quartiles imply for this floor area. Arithmetic on public medians, not a
+        valuation, and the answer carries the caveats to pass on. Shares the address
+        report's limit of 60 an hour per caller.
+
+        Use it for "is this price fair" or "what might this home be worth" on one home with
+        an `akey` (from search_addresses or any row another tool returned). For a home on
+        the market, negotiation_brief adds the asking-price cuts and time on the market.
+        When the home has no floor area on record, or its district too few sales of its
+        type, the answer has `comparable: false` and a `reason` naming the tool to use
+        instead, and no figure is given."""
+        out, step = await _gather([_price_check_core(akey, price_gbp, ctx), core._next_step_for(akey, ctx)])
+        if isinstance(out, Exception):
+            raise out
+        if isinstance(step, dict):
+            out["next_step"] = core._finish(step)
+        return out
+
+    # ------------------------------------------------------------ negotiation brief
+    @mcp.tool(title="Negotiation brief for a home for sale", annotations=READ)
+    @logged("negotiation_brief")
+    async def negotiation_brief(akey: AKey, ctx: Context = None) -> dict:
+        """The evidence a buyer brings to an offer on one home that is advertised for
+        sale: the asking price now, every change to it GetMovely has seen on the advert
+        (with dates and the total cut), how long it has been on the market, the asking
+        price per square metre against what the same type of home sold for in the postcode
+        district, against recent sales on the street, and against the home's own last sale
+        moved by the district's change since, then the points that follow, in plain
+        sentences. Evidence, not a valuation or advice on what to offer. For a home that
+        is not on the market use price_check. Shares the address report's limit of 60 an
+        hour per caller."""
+        rep, step = await _gather([_get("/api/address-report", {"akey": akey}, ctx),
+                                   core._next_step_for(akey, ctx)])
+        if isinstance(rep, Exception):
+            raise rep
+        step = step if isinstance(step, dict) else None
+        t = _tiles(rep)
+        mh = detail(t, "market_history")
+        label = _report_label(rep)
+        if mh.get("listing_status") != "active" or not mh.get("asking_price"):
+            return _ok(akey=akey, address=_report_address(rep), postcode=rep.get("postcode"),
+                       listed_for_sale=False, url=_home_url(akey, label), **({"next_step": step} if step else {}),
+                       reason="GetMovely has not seen this home advertised for sale now, so there is no "
+                              "asking price to brief on. price_check sets any price you give it against "
+                              "the district and the street.")
+        asking = mh["asking_price"]
+        changes = [{"asking_gbp": c.get("price"), "seen": c.get("seen") or "on the advert now"}
+                   for c in mh.get("price_changes") or []]
+        history = None
+        if len(changes) > 1:
+            first = changes[0]["asking_gbp"]
+            history = {"changes_seen": len(changes) - 1, "first_seen_asking_gbp": first,
+                       "first_seen": changes[0]["seen"], "asking_now_gbp": asking,
+                       "total_change_gbp": asking - first,
+                       "total_change_pct": round(100 * (asking / first - 1), 1) if first else None,
+                       "prices": changes}
+        days = mh.get("days_on_market")
+        pc = await _price_check_core(akey, None, ctx, rep=rep)   # None: price_check falls back to the asking price and says so
+        chk = pc.get("price") or {}
+        points = []
+        if history and history["total_change_gbp"] < 0:
+            points.append(f"The asking price has been cut {'once' if history['changes_seen'] == 1 else str(history['changes_seen']) + ' times'} "
+                          f"since {history['first_seen']}, from £{history['first_seen_asking_gbp']:,} to "
+                          f"£{asking:,} ({history['total_change_pct']:g}%).")
+        elif history and history["total_change_gbp"] > 0:
+            points.append(f"The asking price has gone up since {history['first_seen']}, from "
+                          f"£{history['first_seen_asking_gbp']:,} to £{asking:,}.")
+        elif days is not None:
+            points.append("GetMovely has not seen the asking price change.")
+        if days is not None:
+            points.append(f"On the market for {days} days, first seen advertised in {mh.get('first_visible')}."
+                          if mh.get("first_visible") else f"On the market for {days} days.")
+        if pc.get("comparable") and chk:
+            pct = chk.get("vs_district_median_pct")
+            d = pc.get("district") or {}
+            points.append(f"The asking price works out at £{chk['gbp_per_m2']:,} per square metre, "
+                          f"{abs(pct):g}% {'above' if pct > 0 else 'below'} the {d.get('year')} median for "
+                          f"{d.get('property_type')} in {d.get('outcode')} (£{d.get('median_gbp_per_m2'):,}), "
+                          f"{chk.get('position_in_district')} of that year's sales." if pct else
+                          f"The asking price per square metre is in line with the {d.get('year')} district median.")
+            sp = chk.get("vs_street_recent_average_pct")
+            if sp is not None:
+                points.append(f"It is {abs(sp):g}% {'above' if sp > 0 else 'below'} the average price per square "
+                              f"metre of recent sales on {(pc.get('street_recent_sales') or {}).get('scope') or 'the street'}.")
+            mp = chk.get("vs_last_sale_moved_with_district_pct")
+            mv = pc.get("last_sale_moved_with_district") or {}
+            if mp is not None:
+                points.append(f"It last sold for £{mv['last_sale_gbp']:,} ({mv.get('last_sale')}); moved by the "
+                              f"district's change since, that is about £{mv['moved_gbp']:,}, and the asking price is "
+                              f"{abs(mp):g}% {'above' if mp > 0 else 'below'} that.")
+        elif pc.get("reason"):
+            points.append(pc["reason"])
+        caveats = list(CAVEATS) + [
+            "Asking-price changes are the ones GetMovely's crawl has seen: it started recording on 4 October "
+            "2026 and re-reads adverts every one to two days, so an earlier price or a change in the last "
+            "day or two may be missing.",
+            "Evidence for a conversation with the agent, not advice on what to offer."]
+        return _ok(akey=akey, address=_report_address(rep), postcode=rep.get("postcode"),
+                   listed_for_sale=True, asking_price_gbp=asking, days_on_market=days,
+                   first_listed=mh.get("first_visible_date"), agent=mh.get("portal_agent"),
+                   portal=mh.get("portal"), advert_url=mh.get("portal_url"),
+                   asking_price_history=history,
+                   asking_price_changes_seen=len(changes) - 1 if changes else 0,
+                   property_type=pc.get("property_type"), floor_area_m2=pc.get("floor_area_m2"),
+                   price_check=({k: pc.get(k) for k in ("price", "district", "street_recent_sales",
+                                                        "last_sale_moved_with_district",
+                                                        "implied_range_for_this_floor_area")}
+                                if pc.get("comparable") else None),
+                   points=points, caveats=caveats, **({"next_step": step} if step else {}),
+                   url=_home_url(akey, label), sources=[core.SRC_HMLR, core.SRC_EPC])
+
+    # ------------------------------------------------------------ buyer's checks
+    SRC_FLOOD = ("Flood risk © Environment Agency copyright and/or database right 2025. "
+                 "All rights reserved. Open Government Licence v3.0.")
+    SRC_SCHOOL = ("Schools © Crown copyright, Department for Education (Get Information About "
+                  "Schools) and Ofsted, Open Government Licence v3.0.")
+
+    @mcp.tool(title="Buyer's checks for one home", annotations=READ)
+    @logged("buyer_checks")
+    async def buyer_checks(akey: AKey, ctx: Context = None) -> dict:
+        """The things a buyer should look into before offering on one home, in one call:
+        flood risk from rivers and the sea and from surface water (Environment Agency
+        bands), the nearest primary and secondary schools with their last published Ofsted
+        grade, recorded crime and air quality around it, the weak parts of the building
+        and the upgrades its Energy Performance Certificate lists, and freehold or
+        leasehold, then the questions those facts raise.
+
+        Use it for "is there anything I should worry about with this house", "does it
+        flood", "what are the schools like near it". Takes an `akey` from
+        search_addresses or any row another tool returned. `flags` lists only what stood
+        out; an empty list means nothing in this open data did, not that the home has
+        been surveyed. Flood bands describe the area, not the building, and the Ofsted
+        grade is the last one published under the framework that ended in November 2025.
+        Shares the address report's limit of 60 an hour."""
+        got = await _gather([_get("/api/home-checks", {"akey": akey}, ctx),
+                             _get("/api/address-report", {"akey": akey}, ctx),
+                             _get("/api/address", {"akey": akey}, ctx, soft=(404,))])
+        chk, rep, card = got
+        for g in (chk, rep):
+            if isinstance(g, Exception):
+                raise g
+        row = card.get("row") if isinstance(card, dict) else None
+        t = _tiles(rep)
+        en, bld = detail(t, "energy"), detail(t, "building")
+        flood, schools = chk["flood"], chk["schools"]
+        tenure = (row or {}).get("tenure")
+        flags, ask = [], []
+        if flood.get("status") == "flag":
+            flags.append(flood["verdict"] + ".")
+            ask.append("Ask the seller whether the home has ever flooded or had a flood insurance "
+                       "claim, and get a buildings insurance quote before exchange.")
+        for k in ("crime", "air"):
+            if chk[k]["status"] == "flag":
+                flags.append(chk[k]["verdict"] + ".")
+        rating = en.get("rating")
+        if rating in ("F", "G"):
+            flags.append(f"Energy rating {rating}.")
+            ask.append("A home rated F or G cannot be let privately in England or Wales unless it "
+                       "is brought up to E or an exemption is registered; ask what upgrades the "
+                       "seller has done since the certificate.")
+        if not rating:
+            ask.append("There is no Energy Performance Certificate on record; the seller must provide "
+                       "one for the sale.")
+        if tenure == "leasehold":
+            ask.append("It was sold leasehold last time: ask how many years are left on the lease, "
+                       "and for the ground rent and service charge.")
+        weak = en.get("weakest") or []
+        if weak:
+            ask.append("The certificate rates these parts of the building poorly: "
+                       + ", ".join(weak) + ". Ask the surveyor to look at them.")
+        energy = ({"rating": rating, "potential_rating": (en.get("potential") or {}).get("rating"),
+                   "weakest_parts": weak,
+                   "improvements": [{"what": i.get("what"), "indicative_cost": i.get("cost")}
+                                    for i in en.get("improvements") or []],
+                   "certificate_year": en.get("lodged_year")}
+                  if rating else {"certificate": False})
+        label = _report_label(rep)
+        out = dict(akey=akey, address=_report_address(rep), postcode=rep.get("postcode"),
+                   property_type=bld.get("property_type"), floor_area_m2=bld.get("floor_m2"),
+                   tenure_at_last_sale=tenure, flags=flags, worth_asking=ask,
+                   flood={k: flood.get(k) for k in ("verdict", "rivers_and_sea", "surface_water", "note")
+                          if k in flood},
+                   schools={k: schools.get(k) for k in ("verdict", "primary", "secondary", "note")
+                            if k in schools},
+                   crime=chk["crime"], air=chk["air"], energy=energy,
+                   summary=("Nothing in this open data stood out." if not flags else
+                            "Stood out: " + " ".join(flags)),
+                   caveats=["Open data about the area and the certificate, not a survey, a search or "
+                            "legal advice: a conveyancer's searches and a surveyor's report are the "
+                            "checks that count."],
+                   url=_home_url(akey, label),
+                   sources=[SRC_FLOOD, SRC_SCHOOL, core.SRC_CRIME_AIR, core.SRC_EPC, core.SRC_HMLR])
+        if row:
+            out["next_step"] = core._next_step(akey, label, _state(row), _home_facts(row))
         return _ok(**out)
 
     # ------------------------------------------------------------ compare homes

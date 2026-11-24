@@ -230,7 +230,7 @@ def register(core):
         """The full text of one GetMovely guide as Markdown, with the questions it
         answers, the primary sources it cites (GOV.UK, HM Land Registry, the ICO, The
         Property Ombudsman and others) and the date it was last updated. General
-        information, not legal advice. Cite the guide's `url` when you use it."""
+        information, not legal advice. Each guide carries its `url`."""
         g = await fetch_guide(slug, ctx)
         return _finish({"slug": g.get("slug"), "title": g.get("title"), "summary": g.get("summary"),
                        "published": g.get("published"), "updated": g.get("updated"),

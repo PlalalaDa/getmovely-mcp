@@ -99,7 +99,7 @@ BACKEND = os.environ.get("GM_MCP_BACKEND", "http://localhost:8091").rstrip("/")
 PUBLIC = "https://getmovely.co.uk"
 MCP_URL = f"{PUBLIC}/mcp"
 PORT = int(os.environ.get("GM_MCP_PORT", "8096"))
-VERSION = "0.4.0"
+VERSION = "0.4.4"
 CALL_LOG = os.environ.get("GM_MCP_CALL_LOG", os.path.join(HERE, "mcp_calls.log"))
 # Our own clients (the test suite, the maintainer's own assistant, the perf
 # sampler) mark themselves with an X-GM-Probe header. The value is forwarded to
@@ -314,6 +314,81 @@ def _contact_url(akey: str | None, label: str | None, state: str) -> str:
     return f"{PUBLIC}/?letter={akey}"
 
 
+LETTER_GUIDE = f"{PUBLIC}/guides/letter-to-homeowner-asking-to-buy-house"
+NEXT_STEP_WHEN = ("Mention this once, in your own words, after the person has what they asked for "
+                  "and seems interested in this home. Do not repeat it or press it.")
+
+
+def _next_step(akey: str | None, label: str | None, state: str, facts: dict) -> dict:
+    """What a person could do about one home once their assistant has researched
+    it (GM-96). Assistants do the research; nothing told them the letter exists
+    as a next step, so each single-home answer says whether it applies, why, and
+    how. Built only from the public facts the answer already carries."""
+    url = _contact_url(akey, label, state)
+    if state == "owner_on_platform":
+        return {"action": "message_owner", "contact_owner_url": url, "when": NEXT_STEP_WHEN,
+                "suggest": "The owner of this home is on GetMovely and reads messages there. If the "
+                           "person would like to buy it, contact_owner_url opens the message box."}
+    if facts.get("seen_advertised_for_sale"):
+        why = ("It is advertised for sale, so the agent in the advert is the usual route for "
+               "viewings and offers. A letter to the owner is a way to introduce the buyer "
+               "directly as well")
+    elif facts.get("owner_occupied"):
+        why = ("It is not on the market, and its Energy Performance Certificate records the "
+               "owner as living there, so a letter reaches the person who would decide whether "
+               "to sell")
+    else:
+        why = ("It is not on the market. There is no public record that the owner lives there, "
+               "so a letter may reach a tenant rather than the owner")
+    return {"action": "write_to_owner", "contact_owner_url": url, "when": NEXT_STEP_WHEN,
+            "suggest": f"{why}. If the person would like to buy it, they can write to the owner: "
+                       "agree the wording with them and draft_letter returns the letter ready to "
+                       "send, or contact_owner_url opens a blank one. Sending is free with a "
+                       "free account; GetMovely prints and posts it.",
+            "how_to_write_it": LETTER_GUIDE}
+
+
+OFF_MARKET_WHEN = ("Mention this once, in your own words, if the person is looking for a home to "
+                   "buy here and the homes advertised do not settle it. Do not repeat it or press it.")
+
+
+def _off_market_step(area: str, property_type: str | None = None) -> dict:
+    """The step from an AREA answer to the homes nobody else lists (GM-110).
+
+    Up to 2026-11-24 outside callers had run search_homes_for_sale 387 times
+    and find_homes_not_for_sale never: research agents used the server as a
+    for-sale and price source and nothing in those answers said the other
+    search exists. Result text does steer them (on 11-23 a caller took three
+    of the six districts an error message named, inside 100 seconds), so the
+    area answers now carry the call ready to make, with the same area."""
+    args: dict[str, Any] = {"area": area, "owner_occupied": True}
+    if property_type:
+        args["property_type"] = property_type
+    return {"action": "find_homes_not_for_sale", "tool": "find_homes_not_for_sale", "arguments": args,
+            "when": OFF_MARKET_WHEN,
+            "suggest": "Most homes are not advertised at any one time. find_homes_not_for_sale with "
+                       "these arguments lists the homes here that GetMovely has not seen for sale and "
+                       "whose Energy Performance Certificate records the owner as living there, so a "
+                       "letter reaches the owner rather than a tenant. Each row carries "
+                       "contact_owner_url, which opens a letter to that home's owner; draft_letter "
+                       "fills the wording in.",
+            "url": f"{PUBLIC}/tools/homes-not-for-sale?area={_q(area)}"}
+
+
+async def _next_step_for(akey: str, ctx: Any) -> dict | None:
+    """next_step for tools that hold only the report, from the home's card.
+    A missing card leaves the hint out rather than failing the answer."""
+    try:
+        card = await _get("/api/address", {"akey": akey}, ctx, soft=(404,))
+    except Exception:      # the hint is optional; the answer it rides on is not
+        return None
+    r = card.get("row") if isinstance(card, dict) else None
+    if not r:
+        return None
+    return _next_step(akey, _label(r.get("addr") or r.get("title"), r.get("postcode")),
+                      _state(r), _home_facts(r))
+
+
 def _address_row(r: dict, full: bool = False) -> dict:
     """One home as a search row; `full` adds what a single-home answer carries
     (the advert, what the likelihood label means, where to write to the owner).
@@ -342,6 +417,7 @@ def _address_row(r: dict, full: bool = False) -> dict:
             out["advert"] = advert
             out["portal_note"] = PORTAL_NOTE
         out["contact_owner_url"] = _contact_url(r.get("akey"), label, state)
+        out["next_step"] = _next_step(r.get("akey"), label, state, _home_facts(r))
     return out
 
 
@@ -695,8 +771,14 @@ Which tool for which question:
 - One home: address_report is the full picture, including whether it is for sale and
   whether the owner lives there; get_address is the short card with the same two facts;
   sale_history and energy_performance are the short versions of two of its parts;
-  price_check sets a price against the district and the street; compare_homes puts two to
+  price_check sets a price against the district and the street; negotiation_brief is the
+  evidence for an offer on a home that is for sale (asking-price cuts GetMovely has seen,
+  time on the market, asking price against district, street and its own last sale); buyer_checks
+  answers "anything I should worry about": flood risk bands, nearest schools with their
+  last published Ofsted grade, crime, air, weak parts of the building and tenure, with the
+  questions they raise; compare_homes puts two to
   four homes side by side; whats_nearby, tenure_check and house_age answer one question each.
+  whats_nearby also takes up to 50 homes at once in `akeys`: one call for a list of homes, never one call per home.
 - An area: area_overview for one postcode district, compare_areas for several,
   price_trends for what tenure, energy rating, new build or size are worth there,
   district_statistics for leasehold share, how long people stay and home sizes by local
@@ -730,6 +812,14 @@ What the server tells you about a home, and what it means:
 - When the person wants to act on a home, give them `contact_owner_url`: it opens a letter
   to that home's owner on GetMovely (free; sending needs a free account), or the message
   box when the owner is already on GetMovely.
+- After you have researched one home with the person, `next_step` (on get_address,
+  address_report, price_check and negotiation_brief) says whether writing to its owner
+  makes sense and why. Offer it once, in your own words, when the person seems interested
+  in that home; never send anything for them and never press it.
+- After an area answer (search_homes_for_sale, area_overview), `next_step` names
+  find_homes_not_for_sale with the same area filled in: the homes there that are not
+  advertised and are recorded as owner-occupied, each with the link to write to its owner.
+  Offer it once when the person is looking for a home to buy and the adverts do not settle it.
 
 Rules for using the answers:
 - Link the `url` field whenever you quote a figure, so the person can check it. It opens
@@ -769,6 +859,8 @@ READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_h
 
 AKey = Annotated[str, Field(min_length=8, max_length=64, pattern=r"^[a-f0-9]+$",
                             description="Address key from search_addresses (hex string).")]
+
+PT_NAMES = {"D": "detached houses", "S": "semi-detached houses", "T": "terraced houses", "F": "flats"}
 
 SEARCH_MAX_OFFSET = 1140   # what 20 pages of 60 reached before `limit` existed
 FUZZY_ROWS = 10            # near-misses returned when nothing matches exactly
@@ -867,7 +959,7 @@ async def search_addresses(
     `response_likelihood` to answer "which homes on this street are owner-occupied and for
     sale", or sort by it. Returns 20 per page (`limit`, up to 60), newest sale first by default.
     If the street name exists in several places the answer lists the places as `streets`
-    instead of rows; ask the person which one, then search again with the town or postcode.
+    instead of rows; a search with the town or postcode added returns the homes.
     When nothing matches exactly the answer says so (`exact_match` false) and gives at most
     ten of the nearest names, which may be in other towns: Scotland and Northern Ireland are
     not covered."""
@@ -924,7 +1016,13 @@ async def get_address(akey: AKey, ctx: Context = None) -> dict:
     owner-occupied (from its Energy Performance Certificate), whether it is listed for sale
     (with the portal, the agent and the link to the advert), its response likelihood (High
     = listed for sale and owner-occupied), and the link that opens a letter to its owner
-    on GetMovely."""
+    on GetMovely.
+
+    Use it for those yes/no facts about a home you already have an `akey` for (from
+    search_addresses or any row another tool returned). For prices, energy, the street and
+    the area use address_report (everything) or the single-topic tools. An `akey` comes
+    only from another tool's answer; an unknown one fails with "address not found". A field that is null means no
+    public record, not "no": `owner_occupied` null is not the same as false."""
     data = await _get("/api/address", {"akey": akey}, ctx)
     r = data["row"]
     return _ok(**_address_row(r, full=True), about_these_fields=ABOUT_HOME_FACTS,
@@ -961,6 +1059,7 @@ async def address_report(akey: AKey, ctx: Context = None) -> dict:
                         "response_likelihood_means": LIKELIHOOD_MEANS.get(facts["response_likelihood"]),
                         "state": state}
         data["contact_owner_url"] = _contact_url(akey, label, state)
+        data["next_step"] = _next_step(akey, label, state, facts)
         data["about_these_fields"] = ABOUT_HOME_FACTS
     if any((t.get("detail") or {}).get("portal") for t in data.get("tiles") or [] if isinstance(t, dict)):
         data["portal_note"] = PORTAL_NOTE
@@ -974,7 +1073,14 @@ async def street_price_per_m2(akey: AKey, ctx: Context = None) -> dict:
     """Recent Land Registry sales near one home with their EPC floor area, as pounds per
     square metre and per square foot by year. Scope is the home's own postcode when it has
     enough sized sales, otherwise the whole street; `scope` says which. Market-value
-    (category A) sales only."""
+    (category A) sales only.
+
+    Use it for "what do homes on this street go for per square metre". To judge one
+    price or an asking price use price_check, which sets the street beside the district;
+    for a list of the sales themselves use recent_sales with the street as `area`; for a
+    whole district use area_overview. Takes an `akey` from search_addresses or any row
+    another tool returned. A street with no sale that has a floor area on record returns
+    an empty `years`; that means too little evidence, not a price of zero."""
     data = await _get("/api/street-ppsm", {"akey": akey}, ctx)
     data["url"] = _home_url(akey)
     data["study_url"] = f"{PUBLIC}/research/price-per-square-metre"
@@ -996,8 +1102,20 @@ async def price_trends(
     picture. Property type is always held constant because it is the confounder that
     makes the naive comparison lie. Every figure is a median of at least a minimum
     number of sales; no per-address data. For a plain summary of a district across all
-    its property types use area_overview."""
-    data = await _get("/api/price-trends", {"oc": outcode, "pt": property_type, "factor": factor}, ctx)
+    its property types use area_overview.
+
+    Use it for "is a leasehold flat cheaper here", "what is an A-rated house worth over a
+    D", "do bigger homes cost less per m2". For several districts use compare_areas; for
+    one home use price_check. When a district has too few sales of that type the tool
+    fails and names the property types it does have, so ask again with one of those."""
+    data = await _get("/api/price-trends", {"oc": outcode, "pt": property_type, "factor": factor},
+                      ctx, soft=(404,))
+    if data.get("ok") is False:
+        here = [PT_NAMES.get(p, p) for p in data.get("types_here") or []]
+        raise ToolFailure(
+            f"Too few sales of {PT_NAMES.get(property_type, property_type)} in {outcode.upper()} to give "
+            f"medians. " + (f"Types with figures there: {', '.join(here)}." if here else
+                            "No figures for any type there: check it is a postcode district such as 'BS7'."))
     data["url"] = _trends_url(outcode, property_type, factor)
     return _ok(**data, sources=[SRC_HMLR, SRC_EPC])
 
@@ -1007,19 +1125,48 @@ NearbyKind = Literal["rail_station", "tram_metro", "bus_stop", "ferry", "school_
                      "park", "playground"]
 
 
+NEARBY_BATCH_MAX = 50
+
+
 @mcp.tool(title="What is nearby", annotations=READ)
 @logged("whats_nearby")
 async def whats_nearby(
-    akey: AKey,
+    akey: Annotated[AKey | None, Field(description="Address key of one home, from search_addresses. Give this or `akeys`.")] = None,
     radius_m: Annotated[int, Field(ge=100, le=2000, description="Radius in metres, 100 to 2000.")] = 800,
     closest: Annotated[NearbyKind | None, Field(description="Instead of counts within the radius, list the N closest places of this one kind (expanding rings up to 16 km).")] = None,
-    n: Annotated[int, Field(ge=1, le=25)] = 10,
+    n: Annotated[int, Field(ge=1, le=25, description="How many closest places, with `closest`: 10 by default, up to 25 for one home; at most 3 per home with `akeys`.")] = 10,
+    akeys: Annotated[list[AKey] | None, Field(
+        min_length=1, max_length=NEARBY_BATCH_MAX,
+        description="Several homes in one call, up to 50 address keys: use this instead of calling "
+                    "once per home, for example for every home recent_sales or search_homes_for_sale returned.")] = None,
     ctx: Context = None,
 ) -> dict:
     """Train, tram and ferry stops, bus stops, primary and secondary schools, cafes and
-    restaurants, pubs, takeaways, supermarkets, parks and play areas around one home, from
+    restaurants, pubs, takeaways, supermarkets, parks and play areas around a home, from
     official open data, within 100 m to 2 km: for each kind the count, the nearest one and
-    its distance. Pass `closest` with a kind to get the nearest N of that kind instead."""
+    its distance. Pass `closest` with a kind to get the nearest N of that kind instead,
+    however far (the way to ask "how far is the station" for a rural home). To compare
+    many homes, pass up to 50 keys in `akeys` and get one row per home in `homes`: one
+    call covers the whole list.
+
+    Use it for amenities and transport. Crime and air quality are in address_report;
+    compare_homes also names the nearest station, school, supermarket and park for two to
+    four homes. Keys come from search_addresses or any row another tool returned. A kind
+    with nothing inside the radius is left out of `kinds` (an empty `kinds` means nothing
+    within it at all): widen `radius_m` or use `closest`. Schools here are by distance only, not catchment
+    or Ofsted rating."""
+    if bool(akey) == bool(akeys):
+        raise ToolFailure("Give either `akey` (one home) or `akeys` (up to 50 homes), not both and not neither.")
+    if akeys:
+        keys = list(dict.fromkeys(akeys))
+        params = {"akeys": ",".join(keys), "r": radius_m}
+        if closest:
+            params.update({"closest": closest, "n": min(n, 3)})
+        data = await _get("/api/nearby", params, ctx)
+        for h in data.get("homes") or []:
+            h["url"] = _nearby_url(h["akey"], radius_m)
+        data["url"] = f"{PUBLIC}/tools/whats-nearby"
+        return _ok(**data, sources=[SRC_POI, SRC_OS])
     params = {"akey": akey, "r": radius_m}
     if closest:
         params.update({"closest": closest, "n": n})
@@ -1054,7 +1201,14 @@ async def house_age(
 ) -> dict:
     """The construction age band of homes matching an address, from the Energy Performance
     Certificate, with what that era means for the construction, plus the first recorded sale
-    year as corroboration and the property type. Up to 12 candidates."""
+    year as corroboration and the property type. Up to 12 candidates.
+
+    Use it for "when was this house built" and "what is it built like" (solid walls, cavity
+    walls, asbestos era). It takes the address as text, so no `akey` is needed; for the
+    full energy picture of one home use energy_performance. Matching is by text: when
+    `fuzzy` is true the rows are near matches, not the address asked for, and
+    search_addresses finds the exact home. `band` null means that home has no certificate
+    with an age band; `first_yr` is the first sale since 1995, not the build year."""
     data = await _get("/api/built", {"q": query}, ctx)
     if data.get("need_query"):
         raise ToolFailure("Give at least three characters of an address.")
@@ -1126,7 +1280,8 @@ TOOL_GROUPS = [
     ("Search like a buyer", ["search_homes_for_sale", "find_homes_not_for_sale", "recent_sales",
                              "stamp_duty", "draft_letter"]),
     ("Find a home", ["search_addresses", "find_address_from_sale_history", "get_address"]),
-    ("One home", ["address_report", "sale_history", "price_check", "energy_performance", "compare_homes",
+    ("One home", ["address_report", "sale_history", "price_check", "negotiation_brief", "buyer_checks",
+                  "energy_performance", "compare_homes",
                   "whats_nearby", "tenure_check", "house_age", "street_price_per_m2"]),
     ("An area", ["area_overview", "compare_areas", "price_trends", "district_statistics"]),
     ("Guides", ["search_guides", "read_guide"]),
@@ -1182,11 +1337,11 @@ def _page(tools: list[dict], prompts: list[dict]) -> str:
     return f"""<!doctype html>
 <html lang="en-GB"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GetMovely MCP server: UK property data for AI assistants</title>
-<meta name="description" content="Connect Claude, ChatGPT, Cursor or any MCP client to GetMovely: sold prices, tenure, energy certificates, price checks, area comparisons and guides for nearly 25 million homes in England and Wales. Free, read-only, no key.">
+<title>UK sold house prices, Land Registry and EPC data MCP server, free, no key | GetMovely</title>
+<meta name="description" content="Free UK property MCP server: HM Land Registry sold house prices, freehold or leasehold, EPC energy certificates, price checks and area comparisons for nearly 25 million homes in England and Wales. Read-only, no key, no account. Works with Claude, ChatGPT, Cursor and any MCP client.">
 <link rel="canonical" href="{MCP_URL}">
 <link rel="icon" href="{PUBLIC}/favicon.svg">
-<meta property="og:title" content="GetMovely MCP server: UK property data for AI assistants">
+<meta property="og:title" content="UK sold house prices, Land Registry and EPC data MCP server, free, no key | GetMovely">
 <meta property="og:description" content="Free, read-only MCP server: sold prices, tenure, EPC, price checks and area data for homes in England and Wales.">
 <meta property="og:url" content="{MCP_URL}">
 <meta property="og:image" content="{PUBLIC}/static/og.png">
@@ -1201,7 +1356,7 @@ td:first-child{{white-space:nowrap;padding-right:.9rem}}
 .muted{{color:#5b5b5b}} a{{color:#8a3b2b}}
 </style></head><body>
 <p><a href="{PUBLIC}/">GetMovely</a> &rsaquo; For AI assistants</p>
-<h1>Use GetMovely from your AI assistant</h1>
+<h1>UK sold house prices and property data for AI assistants: the GetMovely MCP server</h1>
 <p>GetMovely runs a free <abbr title="Model Context Protocol">MCP</abbr> server at
 <code>{MCP_URL}</code>. Connect it and your assistant can answer questions about any home in
 England and Wales from the public record: whether it is owner-occupied, whether it is listed

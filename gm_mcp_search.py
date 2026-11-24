@@ -136,6 +136,10 @@ def register(core):
     mcp, READ, AKey, logged = core.mcp, core.READ, core.AKey, core.logged
     _get, _ok, ToolFailure = core._get, core._ok, core.ToolFailure
     PUBLIC = core.PUBLIC
+    # search_homes_for_sale speaks the advert's type words; the off-market
+    # search speaks the certificate's, which has no detached/semi/terraced.
+    OFF_MARKET_TYPE = {"house": "house", "detached": "house", "semi-detached": "house",
+                       "terraced": "house", "flat": "flat", "bungalow": "bungalow"}
 
     def offset(page: int) -> int:
         return (page - 1) * PER_PAGE
@@ -232,6 +236,8 @@ def register(core):
                    page=page, per_page=PER_PAGE, more=bool(data.get("more")), sort=data.get("sort"),
                    rows=rows, notes=notes, about_these_fields=core.ABOUT_HOME_FACTS,
                    **({"portal_note": core.PORTAL_NOTE} if named else {}),
+                   # the homes here that are NOT advertised, same area, ready to call
+                   next_step=core._off_market_step(area, OFF_MARKET_TYPE.get(property_type)),
                    url=f"{PUBLIC}/search-listings",
                    sources=["Public property adverts read by GetMovely.", core.SRC_HMLR, core.SRC_EPC])
 
@@ -305,9 +311,12 @@ def register(core):
         return _ok(area=area_bits(data), total=data.get("total"), page=page, per_page=PER_PAGE,
                    more=bool(data.get("more")), sort=data.get("sort"), rows=rows, notes=notes,
                    about_these_fields=core.ABOUT_HOME_FACTS,
-                   # the same place on the website, filtered to owner-occupied homes
-                   # that are not listed (its "Medium" likelihood) when that was asked
-                   url=f"{PUBLIC}/?q={core._q(q_text)}" + ("&likelihood=medium" if owner_occupied else ""),
+                   # the same search on the website's off-market finder, which
+                   # ticks "owner-occupied" unless told otherwise
+                   url=(f"{PUBLIC}/tools/homes-not-for-sale?area={core._q(q_text)}"
+                        + (f"&type={property_type}" if property_type else "")
+                        + (f"&min_sqm={min_floor_area_m2}" if min_floor_area_m2 else "")
+                        + ("" if owner_occupied else "&owner_occupied=0")),
                    sources=[core.SRC_HMLR, core.SRC_EPC, core.SRC_OS])
 
     # ------------------------------------------------------------ sold prices
@@ -462,7 +471,7 @@ def register(core):
         (free; sending needs a free account, and GetMovely prints and posts it). Nothing is
         sent and nothing is stored by this call: the text travels inside the link. Checks
         the website's letter rules first (200 words, 1,400 characters) and says what to fix
-        if the text breaks them. Draft with the person first; the guide
+        if the text breaks them. The text is the person's own; the guide
         'letter-to-homeowner-asking-to-buy-house' says what a good letter contains."""
         lim = await letter_limits()
         text = re.sub(r"[ \t]+\n", "\n", letter_text.replace("\r\n", "\n").replace("\r", "\n")).strip()

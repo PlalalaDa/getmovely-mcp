@@ -4,7 +4,7 @@
   "title": "GetMovely",
   "description": "Search homes for sale and off-market, sold prices, EPC, stamp duty: 25m homes in England and Wales.",
   "websiteUrl": "https://getmovely.co.uk/mcp",
-  "version": "0.4.0",
+  "version": "0.4.4",
   "icons": [
     {
       "src": "https://getmovely.co.uk/static/icon-512.png",

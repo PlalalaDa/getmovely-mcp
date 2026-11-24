@@ -137,6 +137,8 @@ def register(core):
                    url=core._trends_url(oc, most["code"]), sources=[core.SRC_HMLR, core.SRC_EPC])
         if oc in await core._area_outcodes():
             out["sold_prices_by_street"] = f"{PUBLIC}/sold-prices/{oc.lower()}"
+        # prices answered; the homes here a buyer could write to are one call away
+        out["next_step"] = core._off_market_step(oc)
         return _ok(**out)
 
     # ------------------------------------------------------------ several districts
