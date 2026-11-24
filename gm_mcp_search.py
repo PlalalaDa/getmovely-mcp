@@ -278,8 +278,7 @@ def register(core):
         whether the owner lives there. Each row has the address, type, floor area, energy
         rating, last sale and its price per square metre, whether it is owner-occupied, its
         response likelihood, and `contact_owner_url`, the link that opens a letter to that
-        home's owner on GetMovely. Most property servers list only what is on the market;
-        this one searches the homes that are not. 20 a page."""
+        home's owner on GetMovely. 20 a page."""
         data = await _get("/api/homes/off-market", {
             "area": area, "type": property_type, "min_sqm": min_floor_area_m2, "max_sqm": max_floor_area_m2,
             "tenure": tenure, "epc": ",".join(epc_ratings) if epc_ratings else None,

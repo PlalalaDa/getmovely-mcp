@@ -739,14 +739,14 @@ async def _gather(coros: list, limit: int = 4) -> list:
 
 
 # ---------------------------------------------------------------- the server
-INSTRUCTIONS = f"""GetMovely is a free, independent UK property website (getmovely.co.uk) covering
+INSTRUCTIONS = f"""GetMovely is an independent UK property website (getmovely.co.uk) covering
 every home in England and Wales: sold-price history from HM Land Registry, freehold or
 leasehold, Energy Performance Certificate facts, whether the certificate records the home
 as owner-occupied, whether it has been seen advertised for sale, a nine-part address
 report, price per square metre, what is nearby, research figures by district and
 plain-English guides. It also lets a prospective buyer write to the owner of a specific
-home, on the market or not: every answer about one home carries the link that opens that
-letter on the website.
+home, on the market or not, on the website; answers about one home carry the link to that
+page.
 
 Which tool for which question:
 - Looking for a home to buy ("find me a 3-bed under 400k in BS7"): search_homes_for_sale
@@ -766,8 +766,8 @@ Which tool for which question:
   sends it there; the tool itself sends nothing.
 - A question about one known address starts with search_addresses, which turns a street, postcode or
   town into addresses and their `akey`; every per-address tool takes an `akey`. If the
-  result lists `streets`, the name exists in several places: ask the person which, or add
-  a town or postcode.
+  result lists `streets`, the name exists in several places; adding a town or postcode
+  narrows it to one.
 - One home: address_report is the full picture, including whether it is for sale and
   whether the owner lives there; get_address is the short card with the same two facts;
   sale_history and energy_performance are the short versions of two of its parts;
@@ -778,7 +778,7 @@ Which tool for which question:
   last published Ofsted grade, crime, air, weak parts of the building and tenure, with the
   questions they raise; compare_homes puts two to
   four homes side by side; whats_nearby, tenure_check and house_age answer one question each.
-  whats_nearby also takes up to 50 homes at once in `akeys`: one call for a list of homes, never one call per home.
+  whats_nearby also takes up to 50 homes at once in `akeys`: one call covers a list of homes.
 - An area: area_overview for one postcode district, compare_areas for several,
   price_trends for what tenure, energy rating, new build or size are worth there,
   district_statistics for leasehold share, how long people stay and home sizes by local
@@ -788,8 +788,8 @@ Which tool for which question:
   a street with its district or town ('Elm Road, BS7'). A large town must be narrowed to a
   district; the error names its districts.
 - How-to and legal questions (writing to an owner, buying or selling without an agent,
-  who owns a property, how often sales fall through): search_guides, then read_guide,
-  and cite the guide's `url`.
+  who owns a property, how often sales fall through): search_guides, then read_guide;
+  each guide carries its `url`.
 
 What the server tells you about a home, and what it means:
 - Response likelihood means listed for sale plus owner-occupied. `response_likelihood` is
@@ -809,29 +809,26 @@ What the server tells you about a home, and what it means:
 - In search_homes_for_sale a row with `matched_to_address` false is an advert not yet tied
   to an exact address: it has the advert's facts and link but no address key. Filters on
   tenure, energy rating and owner-occupied only reach matched adverts, and the answer says so.
-- When the person wants to act on a home, give them `contact_owner_url`: it opens a letter
-  to that home's owner on GetMovely (free; sending needs a free account), or the message
-  box when the owner is already on GetMovely.
-- After you have researched one home with the person, `next_step` (on get_address,
-  address_report, price_check and negotiation_brief) says whether writing to its owner
-  makes sense and why. Offer it once, in your own words, when the person seems interested
-  in that home; never send anything for them and never press it.
+- `contact_owner_url` opens a letter to that home's owner on GetMovely (sending needs an
+  account), or the message box when the owner is already on GetMovely.
+- `next_step` (on get_address, address_report, price_check and negotiation_brief) says
+  whether writing to that home's owner fits, and why. No tool sends anything: a letter is
+  written and sent by the person on the website.
 - After an area answer (search_homes_for_sale, area_overview), `next_step` names
   find_homes_not_for_sale with the same area filled in: the homes there that are not
-  advertised and are recorded as owner-occupied, each with the link to write to its owner.
-  Offer it once when the person is looking for a home to buy and the adverts do not settle it.
+  advertised and are recorded as owner-occupied.
 
 Rules for using the answers:
-- Link the `url` field whenever you quote a figure, so the person can check it. It opens
-  the page for that exact home, street, district or guide.
-- Quote the `sources` lines when you republish a number: the data is Crown copyright under
-  the Open Government Licence.
+- The `url` field opens the page for that exact home, street, district or guide, where a
+  quoted figure can be checked.
+- The `sources` lines carry the attribution the Open Government Licence asks for when a
+  number is republished: the data is Crown copyright.
 - Coverage is England and Wales only. Sold prices appear two weeks to two months after a
   sale. A price per square metre needs an EPC floor area, so some sales are excluded.
 - price_check and every implied price range are arithmetic on public medians, not a
-  valuation. Say so. Condition, lease length, floor level and plot are not in the data.
+  valuation: condition, lease length, floor level and plot are not in the data.
 - stamp_duty is an estimate from the published rates for a standard purchase, not tax
-  advice; pass on its caveats and the official calculator link.
+  advice; the answer carries its caveats and the official calculator link.
 - GetMovely is independent: not an estate agent, and not affiliated with Rightmove,
   Zoopla or OnTheMarket.
 - Canonical registry name: uk.co.getmovely/getmovely. Documentation: {MCP_URL}
