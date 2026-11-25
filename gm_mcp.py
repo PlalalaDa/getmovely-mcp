@@ -1364,6 +1364,7 @@ England and Wales from the public record: whether it is owner-occupied, whether 
 for sale, what it sold for and when, freehold or leasehold, its energy certificate, whether
 a price is in line with the district and the street, what is nearby, and how postcode
 districts compare. It can search like a buyer: homes for sale that fit a budget and a size,
+homes for sale described in your own words ("a riverside flat with a balcony in London"),
 homes that are not for sale but fit what you want (so you can write to their owners), what
 has sold nearby, and how much stamp duty a price means. It can also read our guides on
 buying, selling and writing to an owner, and when you have agreed a letter with your
@@ -1378,7 +1379,7 @@ and send. No account, no key.
 <tr><td><strong>ChatGPT</strong></td><td>Open <code>chatgpt.com/plugins</code>, press the plus button, choose "Add custom MCP server" and give the URL above. Whether the option appears depends on your plan and workspace settings.</td></tr>
 <tr><td><strong>Cursor, VS Code, Windsurf</strong></td><td>Add a remote MCP server of type <code>http</code> with the URL above.</td></tr>
 <tr><td><strong>OpenClaw</strong></td><td><code>openclaw mcp add getmovely --url {MCP_URL} --transport streamable-http</code></td></tr>
-<tr><td><strong>Anything else</strong></td><td>Streamable HTTP at the URL above, no authentication. Registry name <code>uk.co.getmovely/getmovely</code>.</td></tr>
+<tr><td><strong>Anything else</strong></td><td>Streamable HTTP at the URL above, no authentication. Registry name <code>uk.co.getmovely/getmovely</code>. Source code: <a href="https://github.com/PlalalaDa/getmovely-mcp">github.com/PlalalaDa/getmovely-mcp</a>. Listing and score: <a href="https://glama.ai/mcp/connectors/uk.co.getmovely/getmovely">Glama</a>.</td></tr>
 </table>
 
 <h2>Owner-occupied, for sale, and response likelihood</h2>
@@ -1393,6 +1394,8 @@ and send. No account, no key.
 <h2>Try asking</h2>
 <ul>
 <li>"Find me a 3-bed house under &pound;400,000 in BS7."</li>
+<li>"A riverside flat with a balcony in London, under &pound;600,000."</li>
+<li>"A chain-free cottage that needs modernising near Totnes."</li>
 <li>"Which houses on Elm Road, BS7 are not for sale but owner-occupied? I'd like to write to them."</li>
 <li>"What has sold in SW19 this year for under &pound;500,000?"</li>
 <li>"How much stamp duty on &pound;425,000 as a first-time buyer? And in Wales?"</li>

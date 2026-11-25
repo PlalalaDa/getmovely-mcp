@@ -1,7 +1,10 @@
 # GetMovely MCP server
 
+[![GetMovely MCP connector](https://glama.ai/mcp/connectors/uk.co.getmovely/getmovely/badges/score.svg)](https://glama.ai/mcp/connectors/uk.co.getmovely/getmovely)
+
 UK property data for your AI assistant: every home in England and Wales.
-Ask it to find homes for sale that fit a budget, list the homes on a street
+Ask it to find homes for sale that fit a budget or a description in your own
+words, list the homes on a street
 that are **not** on the market and whose owners live there, show what sold
 nearby, check whether an asking price is in line, work out stamp duty, or
 read the full report on one address. Free, read-only, no account, no API key.
@@ -24,6 +27,7 @@ read the full report on one address. Free, read-only, no account, no API key.
 ## What you can ask
 
 - "Find me a 3-bed house under £400k in BS7."
+- "A riverside flat with a balcony in London, under £600k."
 - "Which owner-occupied houses on Elm Road, BS7 haven't sold since 2005?"
 - "What sold in SW19 this year for under £600k?"
 - "Is £525,000 a fair price for 12 Example Street?" (any real address)
@@ -31,13 +35,13 @@ read the full report on one address. Free, read-only, no account, no API key.
 - "Compare BS7, M20 and SW19 for terraced houses at 90 m²."
 - "This listing hides the house number but shows it sold for £310k in 2012 and £450k in 2019. Which house is it?"
 
-## Tools (23)
+## Tools (26)
 
 | Group | Tools |
 |---|---|
-| Search like a buyer | `search_homes_for_sale`, `find_homes_not_for_sale`, `recent_sales`, `stamp_duty`, `draft_letter` |
+| Search like a buyer | `search_homes_for_sale`, `describe_homes_for_sale`, `find_homes_not_for_sale`, `recent_sales`, `stamp_duty`, `draft_letter` |
 | Find a home | `search_addresses`, `find_address_from_sale_history`, `get_address` |
-| One home | `address_report`, `sale_history`, `price_check`, `energy_performance`, `compare_homes`, `whats_nearby`, `tenure_check`, `house_age`, `street_price_per_m2` |
+| One home | `address_report`, `buyer_checks`, `negotiation_brief`, `sale_history`, `price_check`, `energy_performance`, `compare_homes`, `whats_nearby`, `tenure_check`, `house_age`, `street_price_per_m2` |
 | An area | `area_overview`, `compare_areas`, `price_trends`, `district_statistics` |
 | Guides | `search_guides`, `read_guide` |
 
