@@ -74,9 +74,21 @@ def _num(v):
     return int(f) if f.is_integer() else f
 
 
-SRC_MARKET = ("Adverts: Rightmove listings as GetMovely's crawl read them. Sale certificates: Energy "
-              "Performance of Buildings Register, Department for Energy Security and Net Zero; contains "
-              "public sector information licensed under the Open Government Licence v3.0.")
+# A source the answer already credits in the MCP's own words is not credited
+# twice in the website's.
+_SAME_SOURCE = ("HM Land Registry", "Energy Performance of Buildings")
+
+
+def market_sources(have: list[str], *mns) -> list[str]:
+    """`have` plus the publishers' lines /api/market-now carries for what it
+    showed (the website's one copy, app/attribution.py), in order, each once."""
+    out = list(have)
+    for mn in mns:
+        for s in (mn.get("sources") or []) if isinstance(mn, dict) else []:
+            if s in out or any(k in s and any(k in h for h in out) for k in _SAME_SOURCE):
+                continue
+            out.append(s)
+    return out
 
 
 def market_now(mn: dict | None, pt: str | None = None) -> dict | None:
@@ -192,7 +204,7 @@ def register(core):
         m = market_now(mn if not isinstance(mn, Exception) else None)
         if m:
             out["market_now"] = m
-            out["sources"].append(SRC_MARKET)
+            out["sources"] = market_sources(out["sources"], mn)
         if oc in await core._area_outcodes():
             out["sold_prices_by_street"] = f"{PUBLIC}/sold-prices/{oc.lower()}"
         # prices answered; the homes here a buyer could write to are one call away
@@ -267,7 +279,7 @@ def register(core):
         return _ok(property_type=PT_LABEL[property_type], floor_area_m2=floor_area_m2, districts=rows,
                    cheapest_first=[r["outcode"] for r in sorted(priced, key=lambda r: r["median_gbp_per_m2"])],
                    method=METHOD, url=core._trends_url(priced[0]["outcode"], property_type),
-                   sources=[core.SRC_HMLR, core.SRC_EPC, SRC_MARKET])
+                   sources=market_sources([core.SRC_HMLR, core.SRC_EPC], *mns))
 
     # ------------------------------------------------------------ research by district
     cache: dict[str, tuple[float, list[dict]]] = {}
@@ -401,12 +413,15 @@ def register(core):
                    "20 years or more' share, which is of homes sold since 1995.",
                    "Home size: the total floor area on each home's latest Energy Performance Certificate, so "
                    "homes without a certificate are not counted.",
-                   "Council tax and rents: the council's band D bill for the year (a home's own band is the "
-                   "Valuation Office Agency's to say) and the ONS average rent across all private tenancies, "
+                   "Council tax and rents: the council area's band D council tax for the year, for a home with "
+                   "two adults in England and the council average in Wales (a home's own band is the "
+                   "Valuation Office Agency's to say), and the ONS average rent across all private tenancies, "
                    "not asking rents. Gross yield is twelve months of the average rent for a type over the "
                    "median price paid for that type in the council: a ratio of two different sets of homes "
                    "before any cost, not the return on any home. English and Welsh council tax bands rest on "
                    "different valuation dates and should not be compared.",
                    "An empty section means the district is absent from that study's table."],
             study_pages={k: f"{PUBLIC}{v}" for k, v in STUDY_PAGES.items()},
-            url=f"{PUBLIC}{STUDY_PAGES['holding']}", sources=[core.SRC_HMLR, core.SRC_EPC, core.SRC_CHECKS[3]])
+            url=f"{PUBLIC}{STUDY_PAGES['holding']}",
+            # sales are placed in councils through the postcode lookup
+            sources=[core.SRC_HMLR, core.SRC_EPC, *core.SRC_COSTS, *core.SRC_NSPL])

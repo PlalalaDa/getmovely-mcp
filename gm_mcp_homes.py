@@ -123,6 +123,9 @@ def register(core):
                        reason="No Energy Performance Certificate on record for this home. "
                               "A home that has not been sold or let since 2008 may never have had one.")
         cost, pot, co2 = en.get("cost") or {}, en.get("potential") or {}, en.get("co2") or {}
+        if en.get("uplift"):
+            # the upgrade figure is worked out from Land Registry sales too
+            base["sources"] = [core.SRC_EPC, core.SRC_HMLR]
         return _ok(
             **base, certificate=True, rating=en.get("rating"), score=en.get("score"),
             potential_rating=pot.get("rating"), potential_score=pot.get("score"),
@@ -396,11 +399,6 @@ def register(core):
                    url=_home_url(akey, label), sources=[core.SRC_HMLR, core.SRC_EPC])
 
     # ------------------------------------------------------------ buyer's checks
-    SRC_FLOOD = ("Flood risk © Environment Agency copyright and/or database right 2025. "
-                 "All rights reserved. Open Government Licence v3.0.")
-    SRC_SCHOOL = ("Schools © Crown copyright, Department for Education (Get Information About "
-                  "Schools) and Ofsted, Open Government Licence v3.0.")
-
     @mcp.tool(title="Buyer's checks for one home", annotations=READ)
     @logged("buyer_checks")
     async def buyer_checks(akey: AKey, ctx: Context = None) -> dict:
@@ -514,8 +512,9 @@ def register(core):
                             "legal advice: a conveyancer's searches and a surveyor's report are the "
                             "checks that count."],
                    url=_home_url(akey, label),
-                   sources=[SRC_FLOOD, SRC_SCHOOL, *plan.get("sources", []), *core.SRC_CHECKS,
-                            core.SRC_CRIME_AIR, core.SRC_EPC, core.SRC_HMLR])
+                   # the publishers' lines for every block, as the website shows them
+                   sources=[*(chk.get("sources") or []), core.SRC_CRIME_AIR, core.SRC_EPC,
+                            core.SRC_HMLR])
         if row:
             out["next_step"] = core._next_step(akey, label, _state(row), _home_facts(row))
         return _ok(**out)

@@ -123,26 +123,27 @@ SRC_HMLR = ("Contains HM Land Registry data © Crown copyright and database righ
 SRC_EPC = ("Contains public sector information licensed under the Open Government "
            "Licence v3.0: Energy Performance of Buildings Data, England and Wales.")
 SRC_OS = "Contains OS data © Crown copyright and database right 2026."
-# buyer_checks' open datasets beyond flood and schools (INSIGHTS_PLAN.md 7 to 13).
-SRC_CHECKS = [
-    "School results: Department for Education, Key stage 2 attainment 2024/25 and Key stage 4 "
-    "performance 2025/26 (provisional) and 2024/25, Explore Education Statistics. Contains public "
-    "sector information licensed under the Open Government Licence v3.0.",
-    "Broadband availability and mobile coverage: Ofcom, Connected Nations update: Spring 2026 "
-    "(January 2026). © Ofcom copyright. Contains public sector information licensed under the "
-    "Open Government Licence v3.0.",
-    "Neighbourhood: English Indices of Deprivation 2025 (MHCLG) and Welsh Index of Multiple "
-    "Deprivation 2025 (Welsh Government), Contains public sector information licensed under the "
-    "Open Government Licence v3.0; Census 2021, Source: Office for National Statistics licensed "
-    "under the Open Government Licence v.3.0; ONS National Statistics Postcode Lookup (August "
-    "2026), Contains OS data © Crown copyright and database right 2026, Contains Royal Mail data "
-    "© Royal Mail copyright and database right 2026.",
-    "Energy use: Department for Energy Security and Net Zero, postcode level domestic gas and "
-    "electricity statistics 2024. Private rents: Office for National Statistics, Price Index of "
-    "Private Rents. Council tax: MHCLG, Council Tax levels set by local authorities in England "
-    "2026 to 2027, © Crown copyright; Welsh Government, Council Tax levels April 2026 to March 2027. "
-    "Contains public sector information licensed under the Open Government Licence v3.0.",
+# The insights datasets (INSIGHTS_PLAN.md 7 to 13) are credited with the lines
+# the website's own payloads carry in `sources` (/api/home-checks for
+# buyer_checks, /api/market-now for the area tools), so the MCP keeps no wording
+# of its own for them. The two lists below are the exception, for answers built
+# from the published study CSVs, which carry no attribution: district_statistics
+# and the research index. Verbatim from the website's one copy
+# (app/attribution.py), which test_mcp.py compares them with.
+SRC_COSTS = [
+    "Council tax (England): Ministry of Housing, Communities and Local Government, Council "
+    "Tax levels set by local authorities in England 2026 to 2027. © Crown copyright. Contains "
+    "public sector information licensed under the Open Government Licence v3.0.",
+    "Council tax (Wales): Welsh Government, Council Tax levels: April 2026 to March 2027, and "
+    "StatsWales. Contains public sector information licensed under the Open Government Licence v3.0.",
+    "Private rents: Office for National Statistics, Price Index of Private Rents, UK: monthly price "
+    "statistics (18 November 2026). Contains public sector information licensed under the Open "
+    "Government Licence v3.0.",
 ]
+SRC_NSPL = ["ONS National Statistics Postcode Lookup (August 2026).",
+            "Contains OS data © Crown copyright and database right 2026",
+            "Contains Royal Mail data © Royal Mail copyright and database right 2026",
+            "Source: Office for National Statistics licensed under the Open Government Licence v.3.0"]
 SRC_POI = ("Places from open data under the Open Government Licence v3.0: NaPTAN (DfT), "
            "Food Hygiene Rating Scheme (FSA), Get Information about Schools (DfE), "
            "OS Open Greenspace.")
@@ -1307,7 +1308,7 @@ def research_index() -> dict:
                          "page": f"{PUBLIC}/research/{s}",
                          "csv_resources": [f"getmovely://research/{c}" for c in v["csvs"]]}
                         for s, v in STUDIES.items()],
-            "licence": [SRC_HMLR, SRC_EPC, SRC_CHECKS[3]],
+            "licence": [SRC_HMLR, SRC_EPC, *SRC_COSTS, *SRC_NSPL],
             "attribute_as": "GetMovely (2026), <study title>, getmovely.co.uk/research"}
 
 
