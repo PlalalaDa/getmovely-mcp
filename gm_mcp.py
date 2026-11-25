@@ -99,7 +99,7 @@ BACKEND = os.environ.get("GM_MCP_BACKEND", "http://localhost:8091").rstrip("/")
 PUBLIC = "https://getmovely.co.uk"
 MCP_URL = f"{PUBLIC}/mcp"
 PORT = int(os.environ.get("GM_MCP_PORT", "8096"))
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 CALL_LOG = os.environ.get("GM_MCP_CALL_LOG", os.path.join(HERE, "mcp_calls.log"))
 # Our own clients (the test suite, the maintainer's own assistant, the perf
 # sampler) mark themselves with an X-GM-Probe header. The value is forwarded to
@@ -123,6 +123,26 @@ SRC_HMLR = ("Contains HM Land Registry data © Crown copyright and database righ
 SRC_EPC = ("Contains public sector information licensed under the Open Government "
            "Licence v3.0: Energy Performance of Buildings Data, England and Wales.")
 SRC_OS = "Contains OS data © Crown copyright and database right 2026."
+# buyer_checks' open datasets beyond flood and schools (INSIGHTS_PLAN.md 7 to 13).
+SRC_CHECKS = [
+    "School results: Department for Education, Key stage 2 attainment 2024/25 and Key stage 4 "
+    "performance 2025/26 (provisional) and 2024/25, Explore Education Statistics. Contains public "
+    "sector information licensed under the Open Government Licence v3.0.",
+    "Broadband availability and mobile coverage: Ofcom, Connected Nations update: Spring 2026 "
+    "(January 2026). © Ofcom copyright. Contains public sector information licensed under the "
+    "Open Government Licence v3.0.",
+    "Neighbourhood: English Indices of Deprivation 2025 (MHCLG) and Welsh Index of Multiple "
+    "Deprivation 2025 (Welsh Government), Contains public sector information licensed under the "
+    "Open Government Licence v3.0; Census 2021, Source: Office for National Statistics licensed "
+    "under the Open Government Licence v.3.0; ONS National Statistics Postcode Lookup (August "
+    "2026), Contains OS data © Crown copyright and database right 2026, Contains Royal Mail data "
+    "© Royal Mail copyright and database right 2026.",
+    "Energy use: Department for Energy Security and Net Zero, postcode level domestic gas and "
+    "electricity statistics 2024. Private rents: Office for National Statistics, Price Index of "
+    "Private Rents. Council tax: MHCLG, Council Tax levels set by local authorities in England "
+    "2026 to 2027, © Crown copyright; Welsh Government, Council Tax levels April 2026 to March 2027. "
+    "Contains public sector information licensed under the Open Government Licence v3.0.",
+]
 SRC_POI = ("Places from open data under the Open Government Licence v3.0: NaPTAN (DfT), "
            "Food Hygiene Rating Scheme (FSA), Get Information about Schools (DfE), "
            "OS Open Greenspace.")
@@ -777,16 +797,22 @@ Which tool for which question:
   sale_history and energy_performance are the short versions of two of its parts;
   price_check sets a price against the district and the street; negotiation_brief is the
   evidence for an offer on a home that is for sale (asking-price cuts GetMovely has seen,
-  time on the market, asking price against district, street and its own last sale); buyer_checks
-  answers "anything I should worry about": flood risk bands, nearest schools with their
-  last published Ofsted grade, crime, air, weak parts of the building and tenure, with the
-  questions they raise; compare_homes puts two to
+  time on the market against the district's adverts, asking price against district, street
+  and its own last sale); buyer_checks answers "anything I should worry about": flood risk
+  bands, planning protections (conservation area, listed building entries, article 4,
+  green belt, national park, World Heritage Site), the nearest schools with their last
+  published Ofsted grade and latest results, broadband, the neighbourhood's deprivation
+  rank, council tax and energy use, private rents, crime, air, weak parts of the building
+  and tenure, with the questions they raise; energy_performance adds what a better rating
+  has been worth at the next sale for homes of its type; compare_homes puts two to
   four homes side by side; whats_nearby, tenure_check and house_age answer one question each.
   whats_nearby also takes up to 50 homes at once in `akeys`: one call covers a list of homes.
-- An area: area_overview for one postcode district, compare_areas for several,
-  price_trends for what tenure, energy rating, new build or size are worth there,
-  district_statistics for leasehold share, how long people stay and home sizes by local
-  authority district.
+- An area: area_overview for one postcode district, with the market now (adverts on the
+  market, price cuts, days on the market, homes getting a certificate for a sale against
+  a year earlier), compare_areas for several, price_trends for what tenure, energy
+  rating, new build or size are worth there, district_statistics for leasehold share, how
+  long people stay, home sizes, council tax, private rents and gross rental yields by
+  local authority district.
 - A listing that hides its address but shows past sales: find_address_from_sale_history.
 - The three search tools take an `area`: a postcode district ('BS7'), a postcode, a town, or
   a street with its district or town ('Elm Road, BS7'). A large town must be narrowed to a
@@ -1052,6 +1078,12 @@ async def address_report(akey: AKey, ctx: Context = None) -> dict:
         raise data
     label = _report_label(data)
     data["address"] = _report_address(data)
+    # The website draws a second "Before you offer" panel from the same payload;
+    # here it would double the size of an answer documented as about 15 KB, and
+    # buyer_checks returns the same facts with the questions they raise.
+    if data.pop("checks", None):
+        data["more_checks"] = ("buyer_checks adds flood risk, planning protections, school results, "
+                               "broadband, the neighbourhood, council tax and rents for this home.")
     row = card.get("row") if isinstance(card, dict) else None
     if row:
         state = _state(row)
@@ -1240,17 +1272,42 @@ STUDIES = {
         "csvs": ["how-big-are-homes-in-england-and-wales.csv", "how-big-are-homes-in-england-and-wales-built-form.csv"],
         "blurb": "Median total floor area by district, property type and built form, from 20 million energy performance certificates.",
     },
+    "new-build-premium": {
+        "title": "The new-build premium by district",
+        "csvs": ["new-build-premium.csv"],
+        "blurb": "What a new-build home costs per square metre against an existing home of the same type in the same local authority district, from Land Registry sales matched to EPC floor areas.",
+    },
+    "leasehold-price-gap": {
+        "title": "The leasehold price gap by district",
+        "csvs": ["leasehold-price-gap.csv"],
+        "blurb": "What a leasehold home costs per square metre against a freehold one of the same type in the same local authority district, with and without new builds.",
+    },
+    "what-a-better-energy-rating-is-worth": {
+        "title": "What a better energy rating is worth",
+        "csvs": ["what-a-better-energy-rating-is-worth.csv"],
+        "blurb": "Homes whose EPC band rose between two sales against comparable homes whose band did not change, matched on region, type, starting band and both sale years: by property type, starting band and region.",
+    },
+    "homes-coming-to-market": {
+        "title": "Homes coming to market",
+        "csvs": ["homes-coming-to-market.csv"],
+        "blurb": "Energy certificates lodged for a marketed or a non-marketed sale per postcode district, the latest three months against a year earlier; the page adds how many homes with one sell within a year and what the adverts show now.",
+    },
+    "council-tax-and-rents-by-council": {
+        "title": "Council tax and rents by council",
+        "csvs": ["council-tax-and-rents-by-council.csv"],
+        "blurb": "Band D council tax, the ONS average private rent overall and by property type, the median price paid per type and a gross rental yield, for every council in England and Wales.",
+    },
 }
 
 
 @mcp.resource("getmovely://research", mime_type="application/json", title="Research studies index")
 def research_index() -> dict:
-    """The four GetMovely research studies with their page URLs and CSV resources."""
+    """The GetMovely research studies with their page URLs and CSV resources."""
     return {"studies": [{"slug": s, "title": v["title"], "summary": v["blurb"],
                          "page": f"{PUBLIC}/research/{s}",
                          "csv_resources": [f"getmovely://research/{c}" for c in v["csvs"]]}
                         for s, v in STUDIES.items()],
-            "licence": [SRC_HMLR, SRC_EPC],
+            "licence": [SRC_HMLR, SRC_EPC, SRC_CHECKS[3]],
             "attribute_as": "GetMovely (2026), <study title>, getmovely.co.uk/research"}
 
 

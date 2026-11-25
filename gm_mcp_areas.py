@@ -35,6 +35,7 @@ STUDY_PAGES = {
     "leasehold": "/research/leasehold-freehold-statistics",
     "holding": "/research/how-long-people-stay-in-their-homes",
     "size": "/research/how-big-are-homes-in-england-and-wales",
+    "costs": "/research/council-tax-and-rents-by-council",
 }
 CSVS = {
     "leasehold": "leasehold-freehold-statistics.csv",
@@ -42,6 +43,7 @@ CSVS = {
     "flips": "how-long-people-stay-in-their-homes-flips.csv",
     "size": "how-big-are-homes-in-england-and-wales.csv",
     "built_form": "how-big-are-homes-in-england-and-wales-built-form.csv",
+    "costs": "council-tax-and-rents-by-council.csv",
 }
 NATIONAL = "ENGLAND AND WALES"
 LONDON = "GREATER LONDON (ALL DISTRICTS)"
@@ -72,10 +74,55 @@ def _num(v):
     return int(f) if f.is_integer() else f
 
 
+SRC_MARKET = ("Adverts: Rightmove listings as GetMovely's crawl read them. Sale certificates: Energy "
+              "Performance of Buildings Register, Department for Energy Security and Net Zero; contains "
+              "public sector information licensed under the Open Government Licence v3.0.")
+
+
+def market_now(mn: dict | None, pt: str | None = None) -> dict | None:
+    """/api/market-now in the shape the area tools return: the district's adverts
+    by type (or one type), England and Wales beside them, and the sale
+    certificates. None when the endpoint had nothing (not built, bad district)."""
+    if not isinstance(mn, dict) or not mn.get("ok"):
+        return None
+    names = {"*": "every home", **PT_LABEL}
+    if mn.get("stale"):
+        adverts = {"withheld": "this district's adverts have not been re-read in the last week"}
+    elif pt:
+        a = (mn.get("adverts") or {}).get(pt)
+        adverts = ({"property_type": PT_LABEL[pt], **a} if a else
+                   {"property_type": PT_LABEL[pt], "adverts_on_the_market": 0})
+    else:
+        adverts = [{"property_type": names[k], **v} for k, v in (mn.get("adverts") or {}).items()]
+    nat = mn.get("england_and_wales") or {}
+    out = {"as_seen": mn.get("as_seen"), "adverts": adverts,
+           "england_and_wales": ({"property_type": PT_LABEL[pt], **nat[pt]} if pt and nat.get(pt) else
+                                 {"property_type": "every home", **nat["*"]} if nat.get("*") else None)}
+    sc = mn.get("sale_certificates")
+    if sc:
+        out["sale_certificates"] = {k: sc.get(k) for k in ("district", "england_and_wales",
+                                                          "followed_by_a_sale", "register_through")}
+    for k in ("relisted_within_30_days", "asking_against_sold"):
+        if mn.get(k):
+            out[k] = mn[k]
+    out["method"] = " ".join(x for x in (mn.get("note"), (sc or {}).get("note")) if x)
+    if mn.get("study_url"):
+        out["study"] = f"{core_public()}{mn['study_url']}"
+    return out
+
+
+def core_public() -> str:
+    return _PUBLIC[0]
+
+
+_PUBLIC = [""]
+
+
 def register(core):
     mcp, READ, logged = core.mcp, core.READ, core.logged
     _get, _ok, _gather, ToolFailure = core._get, core._ok, core._gather, core.ToolFailure
     PUBLIC = core.PUBLIC
+    _PUBLIC[0] = PUBLIC
 
     def outcode_of(text: str) -> str:
         oc = (text or "").strip().upper().split(" ")[0]
@@ -117,11 +164,18 @@ def register(core):
         there (detached, semi-detached, terraced, flats): the latest whole year's median
         price per square metre with its quartiles and number of sales, the change since
         the series began in 2015, and the year in progress against the same months a year
-        earlier. Use compare_areas to set districts against each other and price_trends
-        for what tenure, energy rating or size are worth within one."""
+        earlier. `market_now` is the district this month: Rightmove adverts on the market,
+        new in 28 days, the share whose latest change was a price cut, days on the market
+        and days until adverts came down (an accepted offer or a withdrawal), by type,
+        with England and Wales alongside; homes getting an energy certificate for a sale
+        (the earliest public sign of supply) against a year earlier; and the share of
+        sales arranged without open marketing. Use compare_areas to set districts against
+        each other and price_trends for what tenure, energy rating or size are worth
+        within one."""
         oc = outcode_of(outcode)
         got = await _gather([_get("/api/price-trends", {"oc": oc, "pt": pt, "factor": "all"}, ctx, soft=(404,))
-                             for pt in TYPES])
+                             for pt in TYPES] + [_get("/api/market-now", {"oc": oc}, ctx, soft=(400, 503))])
+        mn = got.pop()
         rows = []
         for pt, tr in zip(TYPES, got):
             if isinstance(tr, Exception):
@@ -135,6 +189,10 @@ def register(core):
         most = max(rows, key=lambda r: r.get("sales") or 0)
         out = dict(outcode=oc, property_types=rows, most_sold_type=most["property_type"], method=METHOD,
                    url=core._trends_url(oc, most["code"]), sources=[core.SRC_HMLR, core.SRC_EPC])
+        m = market_now(mn if not isinstance(mn, Exception) else None)
+        if m:
+            out["market_now"] = m
+            out["sources"].append(SRC_MARKET)
         if oc in await core._area_outcodes():
             out["sold_prices_by_street"] = f"{PUBLIC}/sold-prices/{oc.lower()}"
         # prices answered; the homes here a buyer could write to are one call away
@@ -159,9 +217,12 @@ def register(core):
         """Two to six postcode districts side by side for one property type: latest whole
         year's median price per square metre with quartiles and sales, change since 2015,
         the year in progress against the same months a year earlier and, when a floor area
-        is given, what that many square metres cost at each district's median. Property
-        type is held constant because comparing a district of flats with a district of
-        houses compares the mix, not the place."""
+        is given, what that many square metres cost at each district's median; then
+        `market_now` for each: adverts of that type on the market, the share whose latest
+        change was a price cut, median days on the market and until adverts came down,
+        and sale certificates against a year earlier. Property type is held constant
+        because comparing a district of flats with a district of houses compares the mix,
+        not the place."""
         ocs = []
         for o in outcodes:
             oc = outcode_of(o)
@@ -170,15 +231,30 @@ def register(core):
         if len(ocs) < 2:
             raise ToolFailure("Give at least two different postcode districts.")
         got = await _gather([_get("/api/price-trends", {"oc": oc, "pt": property_type, "factor": "all"},
-                                  ctx, soft=(404,)) for oc in ocs], limit=3)
+                                  ctx, soft=(404,)) for oc in ocs]
+                            + [_get("/api/market-now", {"oc": oc}, ctx, soft=(400, 503)) for oc in ocs], limit=3)
+        mns = got[len(ocs):]
+        got = got[:len(ocs)]
         rows = []
-        for oc, tr in zip(ocs, got):
+        for oc, tr, mn in zip(ocs, got, mns):
             if isinstance(tr, Exception):
                 raise tr
             row = type_row(property_type, tr, floor_area_m2)
+            m = market_now(mn if not isinstance(mn, Exception) else None, property_type)
+            if m:
+                a = m["adverts"] if isinstance(m["adverts"], dict) else {}
+                dc = (m.get("sale_certificates") or {}).get("district") or {}
+                m = {"adverts_on_the_market": a.get("adverts_on_the_market"),
+                     "price_cut_pct": a.get("price_cut_pct"),
+                     "median_days_on_the_market": (a.get("days_on_the_market") or {}).get("median"),
+                     "median_days_until_adverts_came_down": (a.get("days_until_it_came_down") or {}).get("median"),
+                     "sale_certificates_change_pct": dc.get("change_pct"),
+                     "not_openly_marketed_pct": dc.get("not_openly_marketed_pct_12_months"),
+                     "as_seen": m.get("as_seen"), **({"withheld": a["withheld"]} if a.get("withheld") else {})}
             if row:
                 row.pop("property_type"), row.pop("code")
-                rows.append({"outcode": oc, **row, "url": core._trends_url(oc, property_type)})
+                rows.append({"outcode": oc, **row, **({"market_now": m} if m else {}),
+                             "url": core._trends_url(oc, property_type)})
             else:
                 here = [PT_LABEL[t] for t in tr.get("types_here") or [] if t in PT_LABEL]
                 rows.append({"outcode": oc, "no_data": True,
@@ -191,7 +267,7 @@ def register(core):
         return _ok(property_type=PT_LABEL[property_type], floor_area_m2=floor_area_m2, districts=rows,
                    cheapest_first=[r["outcode"] for r in sorted(priced, key=lambda r: r["median_gbp_per_m2"])],
                    method=METHOD, url=core._trends_url(priced[0]["outcode"], property_type),
-                   sources=[core.SRC_HMLR, core.SRC_EPC])
+                   sources=[core.SRC_HMLR, core.SRC_EPC, SRC_MARKET])
 
     # ------------------------------------------------------------ research by district
     cache: dict[str, tuple[float, list[dict]]] = {}
@@ -206,6 +282,15 @@ def register(core):
             core._note(f"backend {type(e).__name__}")
             raise ToolFailure("GetMovely is not answering right now; try again in a minute.") from e
         rows = list(csv.DictReader(io.StringIO(text)))
+        if which == "costs":
+            # One row per council under its ONS name; upper case puts it in the
+            # same name space as the Land Registry's districts, and _key()
+            # matches the two spellings ('Bristol', 'CITY OF BRISTOL').
+            for r in rows:
+                r["district"] = (r.get("council") or "").upper()
+                # The one spelling _key() cannot reconcile (checked 2026-11-25).
+                if r["district"] == "RHONDDA CYNON TAF":
+                    r["district"] = "RHONDDA CYNON TAFF"
         cache[which] = (time.time(), rows)
         return rows
 
@@ -227,13 +312,23 @@ def register(core):
             "p75_m2": "upper_quartile_m2", "share_under_50": "under_50_m2_pct", "share_over_150": "over_150_m2_pct"}
     FORM = dict(SIZE, built_form="built_form")
     FORM.pop("property_type")
+    COSTS = {"council_tax_band_d_gbp": "band_d_council_tax_gbp_a_year", "council_tax_year": "council_tax_year",
+             "average_private_rent_gbp_month": "average_private_rent_gbp_a_month",
+             "rent_change_on_year_pct": "rent_change_on_a_year_pct", "rent_month": "rent_month",
+             "rent_terraced_gbp_month": "rent_terraced_gbp_a_month", "rent_flat_gbp_month": "rent_flat_gbp_a_month",
+             "median_price_terraced_gbp": "median_price_terraced_gbp", "median_price_flat_gbp": "median_price_flat_gbp",
+             "gross_yield_detached_pct": "gross_yield_detached_pct",
+             "gross_yield_semi_detached_pct": "gross_yield_semi_detached_pct",
+             "gross_yield_terraced_pct": "gross_yield_terraced_pct", "gross_yield_flat_pct": "gross_yield_flat_pct",
+             "sales_from": "sales_from", "sales_to": "sales_to"}
 
     def sections(t: dict[str, list[dict]], names: set[str]) -> dict:
         return {"leasehold": pick(t["leasehold"], names, LEASE),
                 "how_long_people_stay": pick(t["holding"], names, HOLD),
                 "resold_within_two_years": pick(t["flips"], names, FLIP),
                 "home_size": pick(t["size"], names, SIZE),
-                "home_size_by_built_form": pick(t["built_form"], names, FORM)}
+                "home_size_by_built_form": pick(t["built_form"], names, FORM),
+                "council_tax_and_rents": pick(t["costs"], names, COSTS)}
 
     @mcp.tool(title="Research figures for a local authority district", annotations=READ)
     @logged("district_statistics")
@@ -248,8 +343,10 @@ def register(core):
         """GetMovely's published research for one local authority district, with England
         and Wales alongside: the share of homes that are leasehold (houses and flats
         separately), how many years pass between sales of the same home and the share not
-        sold for 20 years or more, the share of purchases resold within two years, and how
-        big homes are (median floor area, by property type and built form). Districts are
+        sold for 20 years or more, the share of purchases resold within two years, how
+        big homes are (median floor area, by property type and built form), and the
+        council's band D council tax with its private rents and a gross rental yield by
+        property type. Districts are
         named as HM Land Registry and the EPC register name them; an unclear name returns
         the candidates. For prices use area_overview, which works by postcode district."""
         got = await _gather([table(k, ctx) for k in CSVS], limit=3)
@@ -277,8 +374,15 @@ def register(core):
                         raise ToolFailure(f"No district called {district!r} in the research tables. Give the "
                                           "local authority's name, such as 'Bristol', 'Camden' or 'Leeds'; "
                                           "for a postcode district use area_overview.")
+                    # One candidate per place: the council tax table's ONS name and
+                    # the Land Registry's ('Kingston upon Hull', 'CITY OF KINGSTON
+                    # UPON HULL') are the same district.
+                    one = {}
+                    for n in sub:
+                        if len(n) > len(one.get(_key(n), "")):
+                            one[_key(n)] = n
                     return _ok(district=None, query=district,
-                               candidates=[_title(n) for n in sub[:20]],
+                               candidates=[_title(n) for n in sorted(one.values())[:20]],
                                hint=("Several districts match. Ask which, then call again with that name."
                                      if len(sub) > 1 else
                                      "No district has exactly that name; the closest is listed. Call again "
@@ -297,6 +401,12 @@ def register(core):
                    "20 years or more' share, which is of homes sold since 1995.",
                    "Home size: the total floor area on each home's latest Energy Performance Certificate, so "
                    "homes without a certificate are not counted.",
+                   "Council tax and rents: the council's band D bill for the year (a home's own band is the "
+                   "Valuation Office Agency's to say) and the ONS average rent across all private tenancies, "
+                   "not asking rents. Gross yield is twelve months of the average rent for a type over the "
+                   "median price paid for that type in the council: a ratio of two different sets of homes "
+                   "before any cost, not the return on any home. English and Welsh council tax bands rest on "
+                   "different valuation dates and should not be compared.",
                    "An empty section means the district is absent from that study's table."],
             study_pages={k: f"{PUBLIC}{v}" for k, v in STUDY_PAGES.items()},
-            url=f"{PUBLIC}{STUDY_PAGES['holding']}", sources=[core.SRC_HMLR, core.SRC_EPC])
+            url=f"{PUBLIC}{STUDY_PAGES['holding']}", sources=[core.SRC_HMLR, core.SRC_EPC, core.SRC_CHECKS[3]])

@@ -31,6 +31,8 @@ read the full report on one address. Free, read-only, no account, no API key.
 - "Which owner-occupied houses on Elm Road, BS7 haven't sold since 2005?"
 - "What sold in SW19 this year for under £600k?"
 - "Is £525,000 a fair price for 12 Example Street?" (any real address)
+- "Anything to worry about before I offer on 12 Example Street? Flood, planning, schools, broadband."
+- "How quickly are homes selling in SW19 right now?"
 - "How much stamp duty on £450,000 as a first-time buyer?"
 - "Compare BS7, M20 and SW19 for terraced houses at 90 m²."
 - "This listing hides the house number but shows it sold for £310k in 2012 and £450k in 2019. Which house is it?"
@@ -56,11 +58,14 @@ and sends it there themselves. Nothing is sent by the server.
 ## Where the data comes from
 
 HM Land Registry Price Paid Data, the Energy Performance Certificate register,
-official open data for transport, schools, crime and air quality, GetMovely's
-own record of homes advertised for sale, and GetMovely's published research.
-Each answer says what it is built from and carries its caveats (sale-price
-arithmetic is not a valuation). Sources, licences and attributions:
-https://getmovely.co.uk/privacy
+official open data for transport, schools and their results, crime, air quality,
+flood risk, broadband (Ofcom), planning designations (listed buildings,
+conservation areas, green belt, national parks and landscapes), household
+energy use, deprivation and the 2021 Census, private rents and council tax,
+GetMovely's own record of homes advertised for sale, and GetMovely's published
+research. Each answer says what it is built from, names its sources with their
+attribution lines and carries its caveats (sale-price arithmetic is not a
+valuation). The main sources and their licences: https://getmovely.co.uk/privacy
 
 ## This code
 

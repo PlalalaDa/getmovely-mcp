@@ -83,6 +83,17 @@ def register(core):
     def _join(*parts) -> str:
         return " ".join(p.strip() for p in parts if p and p.strip())
 
+    def _uplift(u):
+        """The Energy tile's 'what a better rating has been worth' line, as data."""
+        if not u:
+            return None
+        return {"homes_like_this": PT_LABEL.get(u.get("property_type") or "", "homes in England and Wales"),
+                "next_sale_price_difference_pct": u.get("pct"), "homes_whose_rating_rose": u.get("homes"),
+                "compared_with_unchanged_homes": u.get("compared_with"),
+                "homes_whose_rating_fell_pct": u.get("placebo_pct"), "sales": u.get("years"),
+                "sentence": u.get("sentence"),
+                "study": f"{PUBLIC}{u['url']}" if u.get("url") else None}
+
     # ------------------------------------------------------------ energy
     @mcp.tool(title="Energy performance of one home", annotations=READ)
     @logged("energy_performance")
@@ -128,6 +139,7 @@ def register(core):
             improvements=[{"what": i.get("what"), "indicative_cost": i.get("cost")}
                           for i in en.get("improvements") or []],
             inspected=en.get("inspected"), certificate_year=en.get("lodged_year"),
+            better_rating_worth=_uplift(en.get("uplift")),
             method=en.get("note"))
 
     # ------------------------------------------------------------ price check
@@ -330,6 +342,39 @@ def register(core):
                               f"{abs(mp):g}% {'above' if mp > 0 else 'below'} that.")
         elif pc.get("reason"):
             points.append(pc["reason"])
+        # How this advert's time on the market sits against the district's
+        # adverts of the same type right now (/api/market-now, the trends tool's
+        # "market now" card). Aggregates only; the district is withheld when its
+        # adverts have not been re-read for a week.
+        trd = detail(t, "price_trend")
+        oc = trd.get("outcode") or (rep.get("postcode") or "").split(" ")[0]
+        mn = await _get("/api/market-now", {"oc": oc}, ctx, soft=(400, 503)) if oc else {}
+        district_market = None
+        if mn.get("ok") and not mn.get("stale"):
+            ptc = trd.get("pt") if trd.get("pt") in PT_LABEL else "*"
+            a = (mn.get("adverts") or {}).get(ptc)
+            if a and a.get("days_on_the_market"):
+                who = PT_LABEL.get(ptc, "homes")
+                dom, ttr = a["days_on_the_market"], a.get("days_until_it_came_down") or {}
+                district_market = {"outcode": oc, "property_type": who, "as_seen": mn.get("as_seen"),
+                                   "adverts_on_the_market": a.get("adverts_on_the_market"),
+                                   "median_days_on_the_market": dom.get("median"),
+                                   "median_days_until_adverts_came_down": ttr.get("median"),
+                                   "price_cut_pct": a.get("price_cut_pct")}
+                line = (f"Among the {a['adverts_on_the_market']:,} {who} advertised in {oc}, the median "
+                        f"has been on the market {dom['median']} days")
+                if days is not None:
+                    line += (f"; at {days} days this one has been up longer than three in four of them"
+                             if days > (dom.get("upper_quartile") or 10 ** 6) else
+                             f"; at {days} days this one is newer than three in four of them"
+                             if days < (dom.get("lower_quartile") or -1) else
+                             f"; at {days} days this one is in the middle half")
+                if ttr.get("median"):
+                    line += (f"; those that came down in the last 90 days, by an accepted offer or a "
+                             f"withdrawal, took a median {ttr['median']} days")
+                if a.get("price_cut_pct") is not None:
+                    line += f". For {a['price_cut_pct']}% of them the latest change was a price cut"
+                points.append(line + ".")
         caveats = list(CAVEATS) + [
             "Asking-price changes are the ones GetMovely's crawl has seen: it started recording on 4 October "
             "2026 and re-reads adverts every one to two days, so an earlier price or a change in the last "
@@ -346,6 +391,7 @@ def register(core):
                                                         "last_sale_moved_with_district",
                                                         "implied_range_for_this_floor_area")}
                                 if pc.get("comparable") else None),
+                   district_market_now=district_market,
                    points=points, caveats=caveats, **({"next_step": step} if step else {}),
                    url=_home_url(akey, label), sources=[core.SRC_HMLR, core.SRC_EPC])
 
@@ -360,18 +406,26 @@ def register(core):
     async def buyer_checks(akey: AKey, ctx: Context = None) -> dict:
         """The things a buyer should look into before offering on one home, in one call:
         flood risk from rivers and the sea and from surface water (Environment Agency
-        bands), the nearest primary and secondary schools with their last published Ofsted
-        grade, recorded crime and air quality around it, the weak parts of the building
-        and the upgrades its Energy Performance Certificate lists, and freehold or
-        leasehold, then the questions those facts raise.
+        bands); planning protections (conservation area, listed building entries at or
+        next to it, article 4 direction, green belt, national park, National Landscape,
+        World Heritage Site, scheduled monument); the nearest primary and secondary
+        schools with their last published Ofsted grade and their latest Department for
+        Education results; broadband availability in the postcode and mobile coverage in
+        the council; the neighbourhood's deprivation rank and Census 2021 profile; council
+        tax by band and metered energy use; private rents in the council; recorded crime
+        and air quality; the weak parts of the building and the upgrades its Energy
+        Performance Certificate lists; and freehold or leasehold, then the questions those
+        facts raise.
 
         Use it for "is there anything I should worry about with this house", "does it
-        flood", "what are the schools like near it". Takes an `akey` from
-        search_addresses or any row another tool returned. `flags` lists only what stood
-        out; an empty list means nothing in this open data did, not that the home has
-        been surveyed. Flood bands describe the area, not the building, and the Ofsted
-        grade is the last one published under the framework that ended in November 2025.
-        Shares the address report's limit of 60 an hour."""
+        flood", "is it listed or in a conservation area", "what are the schools like near
+        it", "what is the broadband like". Takes an `akey` from search_addresses or any row
+        another tool returned. `flags` lists only what stood out; an empty list means
+        nothing in this open data did, not that the home has been surveyed or searched.
+        Flood bands and the neighbourhood describe the area, not the building; a listed
+        building entry is a point, so "at or next to" means check the record; conservation
+        areas and article 4 directions are only as complete as each council has published
+        them. Shares the address report's limit of 60 an hour."""
         got = await _gather([_get("/api/home-checks", {"akey": akey}, ctx),
                              _get("/api/address-report", {"akey": akey}, ctx),
                              _get("/api/address", {"akey": akey}, ctx, soft=(404,))])
@@ -392,6 +446,30 @@ def register(core):
         for k in ("crime", "air"):
             if chk[k]["status"] == "flag":
                 flags.append(chk[k]["verdict"] + ".")
+        plan = chk.get("planning") or {}
+        if plan.get("status") == "flag":
+            flags.append(plan["verdict"] + ".")
+        st = lambda k: (plan.get(k) or {}).get("status")
+        if st("listed_building") in ("named", "at_or_next_to"):
+            ask.append("Check the listed building entry: if the home is listed, alterations need listed "
+                       "building consent, and work done without it stays the owner's problem after a sale. "
+                       "Ask the seller what was done and with which consents.")
+        if st("conservation_area") == "inside":
+            ask.append("It is inside a conservation area: ask whether work since the seller bought "
+                       "(windows, doors, extensions, trees) had the consents it needed.")
+        if st("article_4") == "inside":
+            ask.append("An article 4 direction applies here: check what it removes before planning any "
+                       "change, for example conversion to shared housing or an extension.")
+        if st("green_belt") == "inside":
+            ask.append("It is in the green belt: extensions and outbuildings face stricter limits, so ask "
+                       "what planning permissions exist.")
+        if st("national_park") == "inside":
+            ask.append("Planning decisions here are made by the national park authority, under tighter rules.")
+        bb = chk.get("broadband") or {}
+        if bb.get("status") == "flag":
+            flags.append(bb["verdict"] + ".")
+            ask.append("Broadband looks limited in this postcode: check this exact address on the "
+                       "providers' own availability checkers and ask the seller what they have.")
         rating = en.get("rating")
         if rating in ("F", "G"):
             flags.append(f"Energy rating {rating}.")
@@ -415,13 +493,20 @@ def register(core):
                    "certificate_year": en.get("lodged_year")}
                   if rating else {"certificate": False})
         label = _report_label(rep)
+        def part(block, *drop):
+            return {k: v for k, v in (block or {}).items()
+                    if k not in ("lines", "sources", "known", "status") + drop}
         out = dict(akey=akey, address=_report_address(rep), postcode=rep.get("postcode"),
                    property_type=bld.get("property_type"), floor_area_m2=bld.get("floor_m2"),
-                   tenure_at_last_sale=tenure, flags=flags, worth_asking=ask,
+                   tenure_at_last_sale=tenure, area=chk.get("area"), flags=flags, worth_asking=ask,
                    flood={k: flood.get(k) for k in ("verdict", "rivers_and_sea", "surface_water", "note")
                           if k in flood},
-                   schools={k: schools.get(k) for k in ("verdict", "primary", "secondary", "note")
+                   planning=part(plan),
+                   schools={k: schools.get(k) for k in ("verdict", "primary", "secondary", "england",
+                                                        "note", "results_note")
                             if k in schools},
+                   broadband=part(bb), neighbourhood=part(chk.get("neighbourhood")),
+                   running_costs=part(chk.get("costs")), private_rents=part(chk.get("rent")),
                    crime=chk["crime"], air=chk["air"], energy=energy,
                    summary=("Nothing in this open data stood out." if not flags else
                             "Stood out: " + " ".join(flags)),
@@ -429,7 +514,8 @@ def register(core):
                             "legal advice: a conveyancer's searches and a surveyor's report are the "
                             "checks that count."],
                    url=_home_url(akey, label),
-                   sources=[SRC_FLOOD, SRC_SCHOOL, core.SRC_CRIME_AIR, core.SRC_EPC, core.SRC_HMLR])
+                   sources=[SRC_FLOOD, SRC_SCHOOL, *plan.get("sources", []), *core.SRC_CHECKS,
+                            core.SRC_CRIME_AIR, core.SRC_EPC, core.SRC_HMLR])
         if row:
             out["next_step"] = core._next_step(akey, label, _state(row), _home_facts(row))
         return _ok(**out)

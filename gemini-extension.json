@@ -1,6 +1,6 @@
 {
   "name": "getmovely",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "UK property data for England and Wales: homes for sale and not for sale, sold prices, EPC, stamp duty, address reports.",
   "mcpServers": {
     "getmovely": {
