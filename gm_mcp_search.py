@@ -241,6 +241,103 @@ def register(core):
                    url=f"{PUBLIC}/search-listings",
                    sources=["Public property adverts read by GetMovely.", core.SRC_HMLR, core.SRC_EPC])
 
+    # ------------------------------------------------------------ describe it
+    # 0.5.0 (GM-122, signature 1). The website's semantic listing search
+    # (app/listing_search.py, SEMSEARCH.md) as a tool: the person describes the
+    # home, the ranking is vector similarity over the adverts' own text plus
+    # the derived signal tags. Its own tool rather than more arguments on
+    # search_homes_for_sale because the two rank differently (match against
+    # newest), support different filters, and a description changes what
+    # `total` means; one tool doing both silently was how the website's
+    # PE27-style searches went wrong. The leak rule of that module holds here:
+    # card data and derived signals only, never stored listing text.
+    SIGNALS = ("chain_free", "reduced", "needs_modernisation", "development", "probate",
+               "cash_only", "tenanted", "quick_sale", "auction", "annexe", "large_plot",
+               "south_garden", "parking", "garage", "period_features", "accessible",
+               "ev_charger", "home_office", "waterside", "retirement", "new_build",
+               "share_of_freehold", "shared_ownership")
+
+    @mcp.tool(title="Describe a home to find it for sale", annotations=READ)
+    @logged("describe_homes_for_sale")
+    async def describe_homes_for_sale(
+        description: Annotated[str | None, Field(min_length=3, max_length=300,
+            description="The home in the person's own words, for example 'riverside flat with a balcony' "
+                        "or 'quirky cottage that needs work'. Leave the area out of it and pass `area` "
+                        "instead; price, bedrooms and size written here are lifted into filters.")] = None,
+        area: Annotated[str | None, Field(min_length=2, max_length=40,
+            description="A postcode district ('SW19') or a place name ('London', 'Bath'). Unlike "
+                        "search_homes_for_sale, a whole city works here.")] = None,
+        signals: Annotated[list[Literal["chain_free", "reduced", "needs_modernisation", "development",
+                                        "probate", "cash_only", "tenanted", "quick_sale", "auction",
+                                        "annexe", "large_plot", "south_garden", "parking", "garage",
+                                        "period_features", "accessible", "ev_charger", "home_office",
+                                        "waterside", "retirement", "new_build", "share_of_freehold",
+                                        "shared_ownership"]] | None, Field(max_length=10,
+            description="Tags derived from each advert's own text; a tagged listing is one whose advert "
+                        "says it. Combine with or use instead of `description`.")] = None,
+        max_price_gbp: Annotated[int | None, Field(ge=1, le=100_000_000)] = None,
+        min_price_gbp: Annotated[int | None, Field(ge=0, le=100_000_000)] = None,
+        min_bedrooms: Annotated[int | None, Field(ge=0, le=10)] = None,
+        min_floor_area_m2: Annotated[int | None, Field(ge=10, le=2000)] = None,
+        sort: Annotated[Literal["best", "newest", "price_asc", "price_desc", "price_per_m2"], Field(
+            description="'best' (default) is match order for a description and newest for tags alone.")] = "best",
+        page: Annotated[int, Field(ge=1, le=3, description="Page number, 30 homes a page.")] = 1,
+        ctx: Context = None,
+    ) -> dict:
+        """Find homes for sale from a description in the person's own words ("riverside flat
+        in London", "bungalow with a south-facing garden near Totnes"), or from tags the
+        adverts themselves state (chain free, probate, needs modernisation, waterside...),
+        or both. Ranks the adverts GetMovely has read by how well their own text matches;
+        search_homes_for_sale is the structured version of this search (exact bedroom
+        counts, tenure, energy rating, owner-occupied). Give `description` or `signals` or
+        both. Each row has the asking price, type, floor area where known, the advert link,
+        its tags, how well it matched, and for an advert tied to an exact address the
+        `akey` every per-address tool takes. An empty answer means nothing matched the
+        description well, not that nothing is for sale; `unread` counts homes that fit the
+        filters whose adverts GetMovely has not read in full, which a description cannot
+        reach. 30 a page."""
+        if not (description and description.strip()) and not signals:
+            raise ToolFailure("GetMovely: give `description` (the home in the person's words) or "
+                              "`signals`, or use search_homes_for_sale for structured filters.")
+        data = await _get("/api/listings/search", {
+            "q": (description or "").strip(), "area": area,
+            "signals": ",".join(signals) if signals else None,
+            "max_price": max_price_gbp, "min_price": min_price_gbp,
+            "min_beds": min_bedrooms, "min_sqm": min_floor_area_m2,
+            "sort": {"price_per_m2": "ppsqm"}.get(sort, sort),
+            "offset": (page - 1) * 30}, ctx)
+        rows = []
+        for r in data.get("results") or []:
+            rows.append({k: v for k, v in {
+                "address": r.get("address"), "asking_price_gbp": r.get("price"),
+                "bedrooms": r.get("beds"), "bathrooms": r.get("baths"),
+                "property_type": r.get("type"), "floor_area_m2": r.get("sqm"),
+                "asking_price_per_m2": r.get("ppsqm"), "listed_date": r.get("listed"),
+                "signals": r.get("signals") or [],
+                "match": r.get("sim"),
+                "matched_against": ("the full advert text" if r.get("full_text")
+                                    else "the advert's summary only") if r.get("sim") is not None else None,
+                "advert": {"portal": r.get("portal"), "url": r.get("url")} if r.get("url") else None,
+                "more_listings_at_this_address": r.get("dupes") or None,
+                "akey": r.get("akey"), "matched_to_address": bool(r.get("akey")),
+            }.items() if v is not None})
+        notes = ["Ranked by how well each advert's own text matches the description."
+                 if data.get("ranked_by") == "match" else
+                 "No description to rank by, so newest advert first.",
+                 "A tag means the advert itself says it; an untagged home may still have the feature.",
+                 "`unread` homes fit the filters but their adverts have not been read in full, so a "
+                 "description cannot reach them; search_homes_for_sale covers every advert."]
+        if data.get("understood"):
+            notes.append(f"Lifted out of the description into filters: {data['understood']}.")
+        link = f"{PUBLIC}/search-listings?q={quote((description or '').strip())}" +                (f"&area={quote(area)}" if area else "")
+        return _ok(ranked=data.get("total"), matched=data.get("matched"),
+                   unread=data.get("unread"), capped=data.get("capped"),
+                   ranked_by=data.get("ranked_by"), reviewed=data.get("reviewed"),
+                   page=page, per_page=30, rows=rows, notes=notes,
+                   url=link,
+                   sources=["Public property adverts read by GetMovely; tags and ranking are derived "
+                            "from each advert's own text.", core.SRC_HMLR, core.SRC_EPC])
+
     # ------------------------------------------------------------ not for sale
     @mcp.tool(title="Find homes that are not for sale", annotations=READ)
     @logged("find_homes_not_for_sale")

@@ -99,7 +99,7 @@ BACKEND = os.environ.get("GM_MCP_BACKEND", "http://localhost:8091").rstrip("/")
 PUBLIC = "https://getmovely.co.uk"
 MCP_URL = f"{PUBLIC}/mcp"
 PORT = int(os.environ.get("GM_MCP_PORT", "8096"))
-VERSION = "0.4.4"
+VERSION = "0.5.0"
 CALL_LOG = os.environ.get("GM_MCP_CALL_LOG", os.path.join(HERE, "mcp_calls.log"))
 # Our own clients (the test suite, the maintainer's own assistant, the perf
 # sampler) mark themselves with an X-GM-Probe header. The value is forwarded to
@@ -752,7 +752,11 @@ Which tool for which question:
 - Looking for a home to buy ("find me a 3-bed under 400k in BS7"): search_homes_for_sale
   lists the homes advertised for sale in a district, town or street that fit a price range,
   bedrooms, property type and floor area, with the asking price per square metre, days on
-  the market and the link to each advert.
+  the market and the link to each advert. When the person describes the home in their
+  own words ("riverside flat with a balcony", "cottage that needs work"):
+  describe_homes_for_sale ranks the adverts by how well their own text matches, takes a
+  whole city as the area, and filters by tags the adverts state (chain free, probate,
+  needs modernisation, waterside and twenty more).
 - Homes that are NOT on the market ("which houses on this street could I write to",
   "owner-occupied houses over 120 m2 here that have not sold since 2005"):
   find_homes_not_for_sale searches them by type, size, tenure, energy rating, last sale and
