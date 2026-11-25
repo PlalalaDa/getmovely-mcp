@@ -306,6 +306,24 @@ def register(core):
             "min_beds": min_bedrooms, "min_sqm": min_floor_area_m2,
             "sort": {"price_per_m2": "ppsqm"}.get(sort, sort),
             "offset": (page - 1) * 30}, ctx)
+        if data.get("streets") is not None:
+            # The description is a street name in several places. Since
+            # 2026-11-25 the website reads a street as a place, the way the
+            # address search does, and asks which one instead of ranking the
+            # name as words across the country; this answer asks the same,
+            # in search_addresses' shape, with the adverts on each street.
+            streets = data["streets"]
+            return _ok(ambiguous=True, description=description.strip(), rows=[],
+                       hint="This street name exists in several places. Ask which, or search again "
+                            "with the place as `area` (a row's `area` value, or the town).",
+                       streets=[{"street": s.get("street"), "outcode": s.get("outcode"),
+                                 "county": s.get("county") or None,
+                                 "homes_for_sale": s.get("n_sale", 0),
+                                 "area": f"{s.get('street')}, {s.get('outcode')}"}
+                                for s in streets[:40]],
+                       places_total=len(streets), homes_for_sale_total=data.get("for_sale"),
+                       url=f"{PUBLIC}/?sale=1&q={quote(description.strip())}",
+                       sources=["Public property adverts read by GetMovely.", core.SRC_HMLR])
         rows = []
         for r in data.get("results") or []:
             rows.append({k: v for k, v in {
