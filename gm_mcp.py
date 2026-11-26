@@ -99,7 +99,7 @@ BACKEND = os.environ.get("GM_MCP_BACKEND", "http://localhost:8091").rstrip("/")
 PUBLIC = "https://getmovely.co.uk"
 MCP_URL = f"{PUBLIC}/mcp"
 PORT = int(os.environ.get("GM_MCP_PORT", "8096"))
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 CALL_LOG = os.environ.get("GM_MCP_CALL_LOG", os.path.join(HERE, "mcp_calls.log"))
 # Our own clients (the test suite, the maintainer's own assistant, the perf
 # sampler) mark themselves with an X-GM-Probe header. The value is forwarded to
@@ -810,7 +810,8 @@ Which tool for which question:
   whats_nearby also takes up to 50 homes at once in `akeys`: one call covers a list of homes.
 - An area: area_overview for one postcode district, with the market now (adverts on the
   market, price cuts, days on the market, homes getting a certificate for a sale against
-  a year earlier), compare_areas for several, price_trends for what tenure, energy
+  a year earlier); given a region, council or town ('London', 'Camden', 'Guildford') it
+  answers for the whole place, district by district; compare_areas for several, price_trends for what tenure, energy
   rating, new build or size are worth there, district_statistics for leasehold share, how
   long people stay, home sizes, council tax, private rents and gross rental yields by
   local authority district.

@@ -163,13 +163,66 @@ def register(core):
             row["price_at_median_gbp"] = int(round(latest["med"] * floor / 1000.0)) * 1000
         return row
 
+    async def place_overview(text: str, ctx) -> dict:
+        """area_overview for a place bigger than a district (GM-121): a region,
+        a council or a post town, from /api/place-prices. Until 2026-11-26 the
+        tool refused 'London' and 'Camden', and the assistant asked went to
+        the web instead."""
+        d = await _get("/api/place-prices", {"place": text}, ctx, soft=(404,))
+        if d.get("ok") is False:
+            raise ToolFailure(f"{text!r} is not a postcode district, region, council or town GetMovely knows. "
+                              "Give a district such as 'SW19', 'BS7' or 'M6', or a place such as 'London', "
+                              "'Camden' or 'Guildford'. Only England and Wales are covered.")
+        types = []
+        for t in d.get("types") or []:
+            pt = t["pt"]
+            types.append({"property_type": PT_LABEL[pt], "year": d["year"],
+                          "typical_gbp_per_m2": t["weighted_median_of_district_medians"],
+                          "sales": t["sales"], "districts_with_enough_sales": t["districts"],
+                          "cheapest_district": {"outcode": t["lowest"]["oc"], "median_gbp_per_m2": t["lowest"]["med"]},
+                          "dearest_district": {"outcode": t["highest"]["oc"], "median_gbp_per_m2": t["highest"]["med"]},
+                          "change_on_year_pct": t["change_on_year_pct"]})
+        if not types:
+            raise ToolFailure(f"Too few sales with a floor area on record in {d['place']} to give a figure.")
+        most = max(d["types"], key=lambda t: t["sales"])
+        rows = sorted(most["by_district"], key=lambda r: -r["n"])[:40]
+        by_district = [{"outcode": r["oc"], "median_gbp_per_m2": r["med"], "lower_quartile_gbp_per_m2": r["q1"],
+                        "upper_quartile_gbp_per_m2": r["q3"], "sales": r["n"]}
+                       for r in sorted(rows, key=lambda r: r["med"])]
+        first = rows[0]["oc"] if rows else d["outcodes"][0]
+        out = dict(place=d["place"], place_kind=d["kind"], postcode_districts=d["districts_n"],
+                   property_types=types, most_sold_type=PT_LABEL[most["pt"]],
+                   by_district={"property_type": PT_LABEL[most["pt"]], "year": d["year"],
+                                "shown": len(by_district), "of": most["districts"],
+                                "cheapest_first": by_district},
+                   method=("A place is the postcode districts most of whose postcodes lie in it (ONS "
+                           "postcode lookup); a district split between councils counts once, for the one "
+                           "holding most of it. typical_gbp_per_m2 is the median of the districts' own "
+                           "medians weighted by their sales, not a median over every sale in the place. "
+                           "change_on_year_pct sets the same districts against the year before. " + METHOD),
+                   url=core._trends_url(first, most["pt"]),
+                   sources=[core.SRC_HMLR, core.SRC_EPC, *core.SRC_NSPL])
+        steps = [{"tool": "area_overview", "arguments": {"outcode": first},
+                  "when": "for one district: quartiles, the year in progress and the market now"},
+                 {"tool": "compare_areas",
+                  "arguments": {"outcodes": [r["outcode"] for r in by_district[:: max(1, len(by_district) // 4)]][:4],
+                                "property_type": most["pt"]},
+                  "when": "to set districts of this place side by side"}]
+        if d["kind"] == "council":
+            steps.append({"tool": "district_statistics", "arguments": {"district": d["place"]},
+                          "when": "council tax, rents and yields, leasehold share, how long people stay"})
+        out["related"] = steps
+        return _ok(**out)
+
     # ------------------------------------------------------------ one district
-    @mcp.tool(title="Overview of one postcode district", annotations=READ)
+    @mcp.tool(title="Overview of a postcode district or a place", annotations=READ)
     @logged("area_overview")
     async def area_overview(
-        outcode: Annotated[str, Field(min_length=2, max_length=8,
-                                      description="Postcode district such as 'SW19', 'BS7', 'M6'. A full "
-                                                  "postcode is accepted; only the district is used.")],
+        outcode: Annotated[str, Field(min_length=2, max_length=80,
+                                      description="Postcode district such as 'SW19', 'BS7', 'M6' (a full "
+                                                  "postcode is accepted; only the district is used), or a "
+                                                  "bigger place: a region ('London', 'North West'), a "
+                                                  "council ('Camden', 'Manchester', 'Cornwall') or a town.")],
         ctx: Context = None,
     ) -> dict:
         """What homes sell for in one postcode district, for every property type sold
@@ -181,10 +234,16 @@ def register(core):
         and days until adverts came down (an accepted offer or a withdrawal), by type,
         with England and Wales alongside; homes getting an energy certificate for a sale
         (the earliest public sign of supply) against a year earlier; and the share of
-        sales arranged without open marketing. Use compare_areas to set districts against
-        each other and price_trends for what tenure, energy rating or size are worth
-        within one."""
-        oc = outcode_of(outcode)
+        sales arranged without open marketing. Given a region, council or town instead,
+        it answers for the whole place: per property type the typical price per square
+        metre across its districts, sales, cheapest and dearest district and the change
+        on a year, with its districts side by side. Use compare_areas to set districts
+        against each other and price_trends for what tenure, energy rating or size are
+        worth within one."""
+        try:
+            oc = outcode_of(outcode)
+        except ToolFailure:
+            return await place_overview(outcode, ctx)
         got = await _gather([_get("/api/price-trends", {"oc": oc, "pt": pt, "factor": "all"}, ctx, soft=(404,))
                              for pt in TYPES] + [_get("/api/market-now", {"oc": oc}, ctx, soft=(400, 503))])
         mn = got.pop()
