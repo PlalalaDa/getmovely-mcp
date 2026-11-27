@@ -69,10 +69,16 @@ valuation). The main sources and their licences: https://getmovely.co.uk/privacy
 
 ## This code
 
+**There is nothing to install or run.** GetMovely is a hosted (remote) server:
+connect your client to `https://getmovely.co.uk/mcp` as in the table above. No
+Python, no Node, no Docker, no API key.
+
 This repository is the source of the hosted server, published so anyone can
 read exactly what it does with a request. It is a thin layer over the
 GetMovely website's own JSON routes, which hold the data and the rate limits;
-on its own it has nothing to answer from. To connect, use the hosted URL above.
+cloned and run locally it has nothing to answer from, so it is not a way to
+self-host. Directory manifests here (`server.json`, `lhm.plugin.json`,
+`gemini-extension.json`, `.mcp.json`) all point at the hosted URL.
 
 - `gm_mcp.py`: the core (server, backend access, per-caller budgets, the call
   log, the original tools, the page at `GET /mcp`, `/mcp/health`).
