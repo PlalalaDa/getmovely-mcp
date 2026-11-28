@@ -99,7 +99,7 @@ BACKEND = os.environ.get("GM_MCP_BACKEND", "http://localhost:8091").rstrip("/")
 PUBLIC = "https://getmovely.co.uk"
 MCP_URL = f"{PUBLIC}/mcp"
 PORT = int(os.environ.get("GM_MCP_PORT", "8096"))
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 CALL_LOG = os.environ.get("GM_MCP_CALL_LOG", os.path.join(HERE, "mcp_calls.log"))
 # Our own clients (the test suite, the maintainer's own assistant, the perf
 # sampler) mark themselves with an X-GM-Probe header. The value is forwarded to
@@ -771,7 +771,7 @@ page.
 
 Which tool for which question:
 - Looking for a home to buy ("find me a 3-bed under 400k in BS7"): search_homes_for_sale
-  lists the homes advertised for sale in a district, town or street that fit a price range,
+  lists the homes advertised for sale in a district, town, street or whole city that fit a price range,
   bedrooms, property type and floor area, with the asking price per square metre, days on
   the market and the link to each advert. When the person describes the home in their
   own words ("riverside flat with a balcony", "cottage that needs work"):
@@ -816,9 +816,10 @@ Which tool for which question:
   long people stay, home sizes, council tax, private rents and gross rental yields by
   local authority district.
 - A listing that hides its address but shows past sales: find_address_from_sale_history.
-- The three search tools take an `area`: a postcode district ('BS7'), a postcode, a town, or
-  a street with its district or town ('Elm Road, BS7'). A large town must be narrowed to a
-  district; the error names its districts.
+- The three search tools take an `area`: a postcode district ('BS7'), a postcode, a town, a
+  street with its district or town ('Elm Road, BS7'), or a city, council or region ('Leeds',
+  'Camden', 'London'). Across a city the off-market search lists homes without a total; a
+  region bigger than 320 districts must be narrowed, and the error names its districts.
 - How-to and legal questions (writing to an owner, buying or selling without an agent,
   who owns a property, how often sales fall through): search_guides, then read_guide;
   each guide carries its `url`.
@@ -1495,7 +1496,7 @@ and send. No account, no key.
 <li><strong>"No exact match"</strong> from an address search: nothing matched what was typed, and the rows are the nearest names, which can be in another town. Check the spelling or add a postcode. Scotland and Northern Ireland are not covered, so an address there is never found.</li>
 <li><strong>A list of <code>streets</code> instead of homes:</strong> the street name exists in several places. Say which town, or add the first half of the postcode.</li>
 <li><strong>"address not found"</strong> or a refused address key: keys come from a search in the same conversation. Ask the assistant to search for the address again.</li>
-<li><strong>"That place covers ... postcode districts":</strong> a city is too big for one search. Name a district such as BS7 or SW19; the message lists the ones in that place.</li>
+<li><strong>"That place covers ... postcode districts":</strong> a city, council or region works as the area, but a few things need a smaller place: a region larger than London, a floor-area filter on sold prices, or sorting homes that are not for sale by anything but the default order. Name a district such as BS7 or SW19; the message lists the ones in that place.</li>
 <li><strong>"No recorded sale"</strong> or no energy rating: the home has not sold since 1995, or has no Energy Performance Certificate. That is a gap in the public record, not a fault.</li>
 <li><strong>"more than {MINUTE_BUDGET} calls in a minute", "daily budget ... reached" or "rate limit ... reached":</strong> the fair-use limits above, counted per connection. Wait a minute (an hour for address reports, a day for the daily budget) and ask again.</li>
 <li><strong>"GetMovely is not answering right now":</strong> try again in a minute; <a href="/mcp/health">the status page</a> says whether the server is up.</li>

@@ -21,7 +21,8 @@ from pydantic import Field
 from mcp.server.mcpserver import Context
 
 AREA_DESC = ("Where to look: a postcode district ('BS7'), a full postcode ('SW19 1AB'), a town "
-             "('Wimbledon'), or a street with its district or town ('Elm Road, BS7').")
+             "('Wimbledon'), a street with its district or town ('Elm Road, BS7'), or a whole city, "
+             "council or region ('Leeds', 'Camden', 'London').")
 PAGE_DESC = "Page number, 20 homes a page."
 PER_PAGE = 20
 
@@ -157,7 +158,8 @@ def register(core):
     def area_bits(data: dict) -> dict:
         a = data.get("area") or {}
         return {k: v for k, v in {
-            "asked": a.get("asked"), "postcode_districts": a.get("postcode_districts"),
+            "asked": a.get("asked"), "place": a.get("place"), "districts_n": a.get("districts_n"),
+            "postcode_districts": a.get("postcode_districts"),
             "street": a.get("street"), "postcode": a.get("postcode"),
             "postcode_sector": a.get("postcode_sector")}.items() if v}
 
@@ -360,7 +362,8 @@ def register(core):
     @mcp.tool(title="Find homes that are not for sale", annotations=READ)
     @logged("find_homes_not_for_sale")
     async def find_homes_not_for_sale(
-        area: Annotated[str, Field(min_length=2, max_length=160, description=AREA_DESC + " A town of more than four postcode districts must be narrowed to a district.")],
+        area: Annotated[str, Field(min_length=2, max_length=160, description=AREA_DESC + " Across more than four postcode districts the homes are listed without a "
+                                                                                    "total, and any sort but the default needs twelve districts or fewer.")],
         property_type: Annotated[Literal["house", "flat", "bungalow", "maisonette"] | None, Field(
             description="From the home's Energy Performance Certificate, which does not say detached, semi-detached or terraced.")] = None,
         min_floor_area_m2: Annotated[int | None, Field(ge=10, le=2000)] = None,
@@ -419,6 +422,9 @@ def register(core):
                  "'is-it-legal-to-write-to-a-homeowner' before drafting, then draft_letter."]
         if data.get("total") is None and tenure:
             notes.append("With a tenure filter the total is not counted; `more` says whether another page exists.")
+        elif data.get("total") is None and (data.get("area") or {}).get("wide"):
+            notes.append("Across a city the homes are not counted; `more` says whether another page exists. "
+                         "Name one postcode district for a total.")
         a = data.get("area") or {}
         q_text = " ".join(x for x in [a.get("street"), a.get("postcode") or a.get("postcode_sector")
                                      or (a.get("postcode_districts") or [""])[0]] if x) or area
@@ -437,7 +443,7 @@ def register(core):
     @mcp.tool(title="Recent sold prices in an area", annotations=READ)
     @logged("recent_sales")
     async def recent_sales(
-        area: Annotated[str, Field(min_length=2, max_length=160, description=AREA_DESC + " A town of more than six postcode districts must be narrowed to a district.")],
+        area: Annotated[str, Field(min_length=2, max_length=160, description=AREA_DESC + " A floor-area filter needs six postcode districts or fewer.")],
         property_type: Annotated[Literal["D", "S", "T", "F"] | None, Field(
             description="D detached, S semi-detached, T terraced, F flat (the Land Registry's own classes).")] = None,
         sold_from: Annotated[str | None, Field(
@@ -457,9 +463,9 @@ def register(core):
         ctx: Context = None,
     ) -> dict:
         """What sold in an area, newest first: "what sold near here this year", "flats sold in
-        SW19 since January for under £500k". HM Land Registry price paid data for a postcode
-        district, postcode, street or small town, filtered by property type, date range,
-        price range, floor area, tenure and new build. Each sale has the address, price,
+        SW19 since January for under £500k", "what sold in Manchester this year". HM Land
+        Registry price paid data for a postcode district, postcode, street, town or city,
+        filtered by property type, date range, price range, floor area, tenure and new build. Each sale has the address, price,
         date, type, freehold or leasehold, and the price per square metre where the home has
         a floor area on its Energy Performance Certificate. Market-value sales only. Sales
         reach the register two weeks to two months after completion, so the last few weeks
